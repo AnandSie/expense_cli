@@ -1,0 +1,387 @@
+import csv
+import pytest
+from typer.testing import CliRunner
+from expense_cli.cli import app, _validate_bank_config, _validate_categories_config, _validate_counterparties_config
+from expense_cli.storage import read_expenses
+
+runner = CliRunner()
+
+
+# --- _validate_bank_config ---
+
+def test_validate_bank_config_valid():
+    config = {"mapping": {"date": "Date", "amount": "Amount"}}
+    assert _validate_bank_config(config) == []
+
+
+def test_validate_bank_config_missing_mapping():
+    errors = _validate_bank_config({})
+    assert any("mapping" in e for e in errors)
+
+
+def test_validate_bank_config_missing_amount():
+    errors = _validate_bank_config({"mapping": {"date": "Date"}})
+    assert any("amount" in e for e in errors)
+
+
+def test_validate_bank_config_missing_date():
+    errors = _validate_bank_config({"mapping": {"amount": "Amount"}})
+    assert any("date" in e for e in errors)
+
+
+def test_validate_bank_config_legacy_name_key():
+    config = {"mapping": {"date": "Date", "amount": "Amount", "name": "Name"}}
+    errors = _validate_bank_config(config)
+    assert any("counterparty" in e for e in errors)
+
+
+def test_validate_bank_config_dict_field_valid():
+    config = {"mapping": {"date": "Date", "amount": "Amount", "iban": {"column": "IBAN"}}}
+    assert _validate_bank_config(config) == []
+
+
+def test_validate_bank_config_dict_field_pattern_without_from_column():
+    config = {"mapping": {"date": "Date", "amount": "Amount", "iban": {"pattern": r"\w+"}}}
+    errors = _validate_bank_config(config)
+    assert any("iban" in e for e in errors)
+
+
+def test_validate_bank_config_unknown_bank_key():
+    config = {"bank": {"unknown_key": "value"}, "mapping": {"date": "Date", "amount": "Amount"}}
+    errors = _validate_bank_config(config)
+    assert any("unknown_key" in e for e in errors)
+
+
+# --- _validate_categories_config ---
+
+def test_validate_categories_valid():
+    config = {"rules": [{"counterparty": "Albert Heijn", "category": "groceries"}]}
+    assert _validate_categories_config(config) == []
+
+
+def test_validate_categories_empty_rules():
+    assert _validate_categories_config({"rules": []}) == []
+
+
+def test_validate_categories_missing_category():
+    errors = _validate_categories_config({"rules": [{"counterparty": "Albert Heijn"}]})
+    assert any("category" in e for e in errors)
+
+
+def test_validate_categories_missing_counterparty():
+    errors = _validate_categories_config({"rules": [{"category": "groceries"}]})
+    assert any("counterparty" in e for e in errors)
+
+
+def test_validate_categories_legacy_iban_key():
+    config = {"rules": [{"iban": "DE89", "category": "rent"}]}
+    errors = _validate_categories_config(config)
+    assert any("iban" in e for e in errors)
+
+
+def test_validate_categories_legacy_name_contains_key():
+    config = {"rules": [{"name_contains": "rewe", "category": "groceries"}]}
+    errors = _validate_categories_config(config)
+    assert any("name_contains" in e for e in errors)
+
+
+# --- _validate_counterparties_config ---
+
+def test_validate_counterparties_valid_iban():
+    config = {"counterparty": [{"iban": "NL91ABNA0417164300", "name": "Albert Heijn"}]}
+    assert _validate_counterparties_config(config) == []
+
+
+def test_validate_counterparties_valid_description():
+    config = {"counterparty": [{"description_contains": "netflix", "name": "Netflix"}]}
+    assert _validate_counterparties_config(config) == []
+
+
+def test_validate_counterparties_empty():
+    assert _validate_counterparties_config({"counterparty": []}) == []
+
+
+def test_validate_counterparties_missing_name():
+    errors = _validate_counterparties_config({"counterparty": [{"iban": "NL91ABNA0417164300"}]})
+    assert any("name" in e for e in errors)
+
+
+def test_validate_counterparties_missing_matcher():
+    errors = _validate_counterparties_config({"counterparty": [{"name": "Albert Heijn"}]})
+    assert any("iban" in e or "description_contains" in e for e in errors)
+
+
+def test_validate_counterparties_both_matchers():
+    config = {"counterparty": [{"iban": "NL91", "description_contains": "heijn", "name": "Albert Heijn"}]}
+    errors = _validate_counterparties_config(config)
+    assert any("both" in e for e in errors)
+
+
+# --- CLI: version ---
+
+def test_version():
+    result = runner.invoke(app, ["version"])
+    assert result.exit_code == 0
+    assert "0.1.0" in result.output
+
+
+# --- CLI: add + list ---
+
+def test_add_and_list(tmp_storage):
+    result = runner.invoke(app, ["add", "12.50", "Coffee"])
+    assert result.exit_code == 0
+    assert "Added expense #1" in result.output
+
+    result = runner.invoke(app, ["list"])
+    assert result.exit_code == 0
+    assert "12.50" in result.output
+    assert "Coffee" in result.output
+
+
+def test_add_default_category_is_empty(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "Test"])
+    assert read_expenses()[0]["category"] == ""
+
+
+def test_add_with_explicit_category(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "Test", "--category", "food"])
+    assert read_expenses()[0]["category"] == "food"
+
+
+def test_add_stores_weekday(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "Test", "--date", "2026-01-05"])  # Monday
+    assert read_expenses()[0]["weekday"] == "Monday"
+
+
+def test_add_without_time_stores_empty(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "Test"])
+    assert read_expenses()[0]["time"] == ""
+
+
+def test_add_with_time(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "Test", "--time", "14:30:00"])
+    assert read_expenses()[0]["time"] == "14:30:00"
+
+
+def test_import_stores_weekday(tmp_storage):
+    _write_bank_config(tmp_storage)
+    csv_file = tmp_storage / "statement.csv"
+    _write_csv(csv_file, [{"Date": "2026-01-05", "Amount": "10.00", "Description": "Test",
+                            "IBAN": "", "Counterparty": ""}])
+    runner.invoke(app, ["import", str(csv_file), "--bank", "test_bank"])
+    assert read_expenses()[0]["weekday"] == "Monday"
+
+
+def test_list_empty(tmp_storage):
+    result = runner.invoke(app, ["list"])
+    assert "No expenses found" in result.output
+
+
+def test_list_filter_by_category(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--category", "food"])
+    runner.invoke(app, ["add", "20.00", "B", "--category", "transport"])
+    result = runner.invoke(app, ["list", "--category", "food"])
+    assert "10.00" in result.output
+    assert "20.00" not in result.output
+
+
+def test_list_filter_by_date_range(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--date", "2026-01-01"])
+    runner.invoke(app, ["add", "20.00", "B", "--date", "2026-03-01"])
+    result = runner.invoke(app, ["list", "--from", "2026-02-01"])
+    assert "20.00" in result.output
+    assert "10.00" not in result.output
+
+
+def test_list_unreviewed(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A"])  # no counterparty or category
+    runner.invoke(app, ["add", "20.00", "B", "--category", "food", "--counterparty", "Shop"])
+    result = runner.invoke(app, ["list", "--unreviewed"])
+    assert "10.00" in result.output
+    assert "20.00" not in result.output
+
+
+def test_list_reviewed(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A"])
+    runner.invoke(app, ["add", "20.00", "B", "--category", "food", "--counterparty", "Shop"])
+    result = runner.invoke(app, ["list", "--reviewed"])
+    assert "20.00" in result.output
+    assert "10.00" not in result.output
+
+
+# --- CLI: edit ---
+
+def test_edit_category(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "Test"])
+    result = runner.invoke(app, ["edit", "1", "--category", "food"])
+    assert result.exit_code == 0
+    assert read_expenses()[0]["category"] == "food"
+
+
+def test_edit_counterparty(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "Test"])
+    runner.invoke(app, ["edit", "1", "--counterparty", "Albert Heijn"])
+    assert read_expenses()[0]["counterparty"] == "Albert Heijn"
+
+
+def test_edit_nonexistent_id(tmp_storage):
+    result = runner.invoke(app, ["edit", "99", "--category", "food"])
+    assert result.exit_code == 1
+
+
+def test_edit_requires_at_least_one_field(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "Test"])
+    result = runner.invoke(app, ["edit", "1"])
+    assert result.exit_code == 1
+
+
+# --- CLI: delete ---
+
+def test_delete_expense(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "Test"])
+    result = runner.invoke(app, ["delete", "1", "--yes"])
+    assert result.exit_code == 0
+    assert read_expenses() == []
+
+
+def test_delete_nonexistent_id(tmp_storage):
+    result = runner.invoke(app, ["delete", "99", "--yes"])
+    assert result.exit_code == 1
+
+
+def test_delete_no_args_errors(tmp_storage):
+    result = runner.invoke(app, ["delete"])
+    assert result.exit_code != 0
+
+
+def test_delete_all_wipes_everything(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A"])
+    runner.invoke(app, ["add", "20.00", "B"])
+    result = runner.invoke(app, ["delete", "--all"], input="DELETE\n")
+    assert result.exit_code == 0
+    assert read_expenses() == []
+
+
+def test_delete_all_wrong_confirmation_aborts(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "Test"])
+    runner.invoke(app, ["delete", "--all"], input="yes\n")
+    assert len(read_expenses()) == 1
+
+
+def test_delete_all_shows_count(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A"])
+    runner.invoke(app, ["add", "20.00", "B"])
+    result = runner.invoke(app, ["delete", "--all"], input="DELETE\n")
+    assert "2" in result.output
+
+
+def test_delete_all_on_empty_store(tmp_storage):
+    result = runner.invoke(app, ["delete", "--all"], input="DELETE\n")
+    assert result.exit_code == 0
+
+
+# --- CLI: review ---
+
+def test_review_shows_unhandled(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "Test"])
+    result = runner.invoke(app, ["review"])
+    assert result.exit_code == 0
+    assert "10.00" in result.output
+
+
+def test_review_nothing_when_all_handled(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "Test", "--category", "food", "--counterparty", "Shop"])
+    result = runner.invoke(app, ["review"])
+    assert "Nothing to review" in result.output
+
+
+def test_review_unidentified_filter(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A"])                          # no counterparty
+    runner.invoke(app, ["add", "20.00", "B", "--counterparty", "Shop"])  # has counterparty, no category
+    result = runner.invoke(app, ["review", "--unidentified"])
+    assert "10.00" in result.output
+    assert "20.00" not in result.output
+
+
+def test_review_uncategorized_filter(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A"])                           # no category
+    runner.invoke(app, ["add", "20.00", "B", "--category", "food"])     # has category, no counterparty
+    result = runner.invoke(app, ["review", "--uncategorized"])
+    assert "10.00" in result.output
+    assert "20.00" not in result.output
+
+
+# --- CLI: import ---
+
+def _write_bank_config(tmp_storage):
+    config = (
+        '[bank]\nencoding = "utf-8"\ndate_format = "%Y-%m-%d"\n'
+        'decimal_separator = "."\ndelimiter = ","\n\n'
+        '[mapping]\ndate = "Date"\namount = "Amount"\n'
+        'description = "Description"\niban = "IBAN"\ncounterparty = "Counterparty"\n'
+    )
+    (tmp_storage / "banks" / "test_bank.toml").write_text(config, encoding="utf-8")
+
+
+def _write_csv(path, rows):
+    with path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["Date", "Amount", "Description", "IBAN", "Counterparty"])
+        w.writeheader()
+        for row in rows:
+            w.writerow(row)
+
+
+def test_import_basic(tmp_storage):
+    _write_bank_config(tmp_storage)
+    csv_file = tmp_storage / "statement.csv"
+    _write_csv(csv_file, [
+        {"Date": "2026-01-01", "Amount": "42.50", "Description": "Groceries",
+         "IBAN": "NL91ABNA0417164300", "Counterparty": "Albert Heijn"},
+    ])
+    result = runner.invoke(app, ["import", str(csv_file), "--bank", "test_bank"])
+    assert result.exit_code == 0
+    assert "Imported 1" in result.output
+    assert read_expenses()[0]["amount"] == "42.50"
+
+
+def test_import_deduplication(tmp_storage):
+    _write_bank_config(tmp_storage)
+    csv_file = tmp_storage / "statement.csv"
+    _write_csv(csv_file, [
+        {"Date": "2026-01-01", "Amount": "42.50", "Description": "Groceries",
+         "IBAN": "NL91ABNA0417164300", "Counterparty": "Albert Heijn"},
+    ])
+    runner.invoke(app, ["import", str(csv_file), "--bank", "test_bank"])
+    result = runner.invoke(app, ["import", str(csv_file), "--bank", "test_bank"])
+    assert "skipped 1 duplicates" in result.output
+    assert len(read_expenses()) == 1
+
+
+def test_import_auto_categorization(tmp_storage):
+    _write_bank_config(tmp_storage)
+    (tmp_storage / "categories.toml").write_text(
+        '[[rules]]\ncounterparty = "Albert Heijn"\ncategory = "groceries"\n',
+        encoding="utf-8",
+    )
+    csv_file = tmp_storage / "statement.csv"
+    _write_csv(csv_file, [
+        {"Date": "2026-01-01", "Amount": "10.00", "Description": "Shop",
+         "IBAN": "", "Counterparty": "Albert Heijn"},
+    ])
+    runner.invoke(app, ["import", str(csv_file), "--bank", "test_bank"])
+    assert read_expenses()[0]["category"] == "groceries"
+
+
+def test_import_auto_identification(tmp_storage):
+    _write_bank_config(tmp_storage)
+    (tmp_storage / "counterparties.toml").write_text(
+        '[[counterparty]]\ndescription_contains = "groceries"\nname = "Albert Heijn"\n',
+        encoding="utf-8",
+    )
+    csv_file = tmp_storage / "statement.csv"
+    _write_csv(csv_file, [
+        {"Date": "2026-01-01", "Amount": "10.00", "Description": "Groceries payment",
+         "IBAN": "", "Counterparty": ""},
+    ])
+    runner.invoke(app, ["import", str(csv_file), "--bank", "test_bank"])
+    assert read_expenses()[0]["counterparty"] == "Albert Heijn"

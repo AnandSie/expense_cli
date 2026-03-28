@@ -1,0 +1,34 @@
+# Categorization rules for expense_cli.
+# Copy to ~/.expense_cli/categories.toml and add your own rules.
+#
+# Rules are evaluated in order; the first match wins.
+# Each rule matches on the normalized counterparty name (set by counterparties.toml)
+# and assigns a category.
+
+[[rules]]
+counterparty = "Jan Janssen"
+category     = "rent"
+
+[[rules]]
+counterparty = "REWE"
+category     = "groceries"
+
+[[rules]]
+counterparty = "ALDI"
+category     = "groceries"
+
+[[rules]]
+counterparty = "Deutsche Bahn"
+category     = "transport"
+
+[[rules]]
+counterparty = "Netflix"
+category     = "subscriptions"
+
+[[rules]]
+counterparty = "Spotify"
+category     = "subscriptions"
+
+[[rules]]
+counterparty = "Stadtwerke"
+category     = "utilities"

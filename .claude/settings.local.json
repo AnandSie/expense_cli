@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__Claude_Preview__preview_start",
+      "Bash(.venv/Scripts/python -m expense_cli --help 2>&1)",
+      "Bash(.venv/Scripts/python -m expense_cli config --help 2>&1)",
+      "Bash(.venv/Scripts/pip install:*)",
+      "Bash(.venv/Scripts/pytest -v)",
+      "Bash(.venv/Scripts/python -m pip install --upgrade pip -q)",
+      "Bash(.venv/Scripts/pytest --tb=no -q)",
+      "Bash(.venv/Scripts/pytest tests/test_storage.py tests/test_cli.py --tb=line -q)",
+      "Bash(.venv/Scripts/pytest tests/test_cli.py -k reset --tb=line -q 2>&1)",
+      "Bash(.venv/Scripts/pytest --tb=short -q)",
+      "Bash(python -m pytest tests/test_cli.py -x -q)"
+    ]
+  }
+}

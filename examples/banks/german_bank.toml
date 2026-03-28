@@ -1,0 +1,28 @@
+# Example bank config for a German bank export (XLS format).
+# Handles comma as decimal separator and extracts IBAN/name from the
+# Verwendungszweck (purpose) field using regex when no dedicated column exists.
+#
+# Copy to ~/.expense_cli/banks/<bank_name>.toml and adjust column names
+# to match your bank's actual export headers.
+
+[bank]
+date_format       = "%d.%m.%Y"   # e.g. 15.03.2024
+decimal_separator = ","          # 1.234,56
+
+[mapping]
+date        = "Buchungsdatum"
+amount      = "Betrag"
+description = "Verwendungszweck"
+
+# Flexible IBAN mapping: try the dedicated column first; if empty or absent,
+# fall back to extracting an IBAN pattern from the description field.
+[mapping.iban]
+column      = "Gegenkontonummer"         # dedicated column (may be blank)
+from_column = "Verwendungszweck"         # fallback source column
+pattern     = '[A-Z]{2}\d{2}[A-Z0-9]+'  # matches e.g. DE89370400440532013000
+
+# Flexible counterparty mapping: no dedicated column, extract from description.
+# Matches "Auftraggeber: Some Name  " — capture stops at double-space or end of string.
+[mapping.counterparty]
+from_column = "Verwendungszweck"
+pattern     = 'Auftraggeber:\s*(.+?)(?:\s{2,}|$)'

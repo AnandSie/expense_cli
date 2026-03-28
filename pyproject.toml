@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "expense-cli"
+version = "0.1.0"
+description = "CLI tool for organizing and categorizing expenses."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "typer>=0.12,<1.0",
+    "tomli>=2.0; python_version < '3.11'",
+    "xlrd>=2.0",
+]
+
+[project.scripts]
+expense = "expense_cli.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["expense_cli*"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,16 @@
+# Example bank config for a straightforward CSV export.
+# Copy to ~/.expense_cli/banks/<bank_name>.toml and adjust column names
+# to match your bank's actual CSV headers.
+
+[bank]
+encoding          = "utf-8"
+date_format       = "%Y-%m-%d"    # e.g. 2024-03-15
+decimal_separator = "."           # 1234.56
+delimiter         = ","
+
+[mapping]
+date        = "Date"
+amount      = "Amount"
+description = "Description"
+iban        = "CounterpartyIBAN"
+counterparty = "CounterpartyName"

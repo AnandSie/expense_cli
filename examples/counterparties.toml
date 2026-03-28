@@ -1,0 +1,36 @@
+# Counterparty identification rules for expense_cli.
+# Copy to ~/.expense_cli/counterparties.toml and add your own entries.
+#
+# Rules are evaluated in order; the first match wins.
+# Each entry must have exactly one matcher (iban or description_contains) and a name.
+#
+# iban                — exact match on counterparty IBAN (case-insensitive)
+# description_contains — substring match against the transaction description (case-insensitive)
+
+[[counterparty]]
+iban = "DE89370400440532013000"
+name = "Jan Janssen"
+
+[[counterparty]]
+description_contains = "rewe"
+name = "REWE"
+
+[[counterparty]]
+description_contains = "aldi"
+name = "ALDI"
+
+[[counterparty]]
+description_contains = "db bahn"
+name = "Deutsche Bahn"
+
+[[counterparty]]
+description_contains = "netflix"
+name = "Netflix"
+
+[[counterparty]]
+description_contains = "spotify"
+name = "Spotify"
+
+[[counterparty]]
+description_contains = "stadtwerke"
+name = "Stadtwerke"
