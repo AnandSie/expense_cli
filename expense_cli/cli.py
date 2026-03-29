@@ -16,11 +16,59 @@ app = typer.Typer(
 )
 config_app = typer.Typer(help="Inspect and validate configuration files.")
 app.add_typer(config_app, name="config")
+counterparties_app = typer.Typer(help="Manage counterparty identification rules.", invoke_without_command=True)
+config_app.add_typer(counterparties_app, name="counterparties")
+categories_app = typer.Typer(help="Manage category rules.", invoke_without_command=True)
+config_app.add_typer(categories_app, name="categories")
 console = Console(highlight=False)
 
 BANKS_DIR = Path.home() / ".expense_cli" / "banks"
 CATEGORIES_PATH = Path.home() / ".expense_cli" / "categories.toml"
 COUNTERPARTIES_PATH = Path.home() / ".expense_cli" / "counterparties.toml"
+
+_COUNTERPARTIES_TEMPLATE = """\
+# Counterparty identification rules.
+# Each entry maps an IBAN or a description substring to a normalized name.
+# Matched in order: IBAN first, then description_contains.
+
+# [[counterparty]]
+# iban = "NL91ABNA0417164300"
+# name = "albert heijn"
+
+# [[counterparty]]
+# description_contains = "spotify"
+# name = "spotify"
+"""
+
+_CATEGORIES_TEMPLATE = """\
+# Category assignment rules.
+# Each rule maps a counterparty name (exact, case-insensitive) to a category.
+
+# [[rules]]
+# counterparty = "albert heijn"
+# category = "groceries"
+
+# [[rules]]
+# counterparty = "spotify"
+# category = "subscriptions"
+"""
+
+_BANK_TEMPLATE = """\
+[bank]
+encoding = "utf-8"
+date_format = "%Y-%m-%d"
+decimal_separator = "."
+delimiter = ","
+# time_format = "%H:%M:%S"  # optional
+
+[mapping]
+date = "Date"
+amount = "Amount"
+# description = "Description"   # optional
+# iban = "IBAN"                  # optional
+# counterparty = "Counterparty"  # optional
+# time = "Time"                  # optional
+"""
 
 
 def _parse_month(month: str, year: Optional[int] = None) -> tuple[str, str]:
@@ -124,15 +172,15 @@ def _validate_counterparties_config(config: dict) -> list[str]:
             errors.append(f"{prefix}: missing or empty 'name'")
         matchers = [k for k in entry if k in ("iban", "description_contains")]
         if len(matchers) == 0:
-            errors.append(f"{prefix}: must have 'iban' or 'description_contains'")
+            errors.append(f"{prefix}: must have at least one of 'iban' or 'description_contains'")
         if len(matchers) > 1:
             errors.append(f"{prefix}: has both 'iban' and 'description_contains' — only one matcher per entry")
     return errors
 
 
 @config_app.command(name="bank-list")
-def config_bank_list() -> None:
-    """List all available bank configs."""
+def _config_bank_list_compat() -> None:
+    """List all available bank configs (kept for backwards compatibility)."""
     if not BANKS_DIR.exists() or not list(BANKS_DIR.glob("*.toml")):
         typer.echo("No bank configs found in ~/.expense_cli/banks/")
         return
@@ -142,9 +190,17 @@ def config_bank_list() -> None:
 
 @config_app.command(name="bank")
 def config_bank(
-    bank: str = typer.Argument(..., help="Bank name (matches ~/.expense_cli/banks/<name>.toml)"),
+    bank: str = typer.Argument(..., help="Bank name, or 'new <name>' to create a template"),
+    sub_name: Optional[str] = typer.Argument(None, hidden=True),
 ) -> None:
-    """Print and validate a bank config file."""
+    """Print and validate a bank config, or create a new template with 'bank new <name>'."""
+    if bank == "new":
+        if sub_name is None:
+            typer.echo("Usage: expense config bank new <name>", err=True)
+            raise typer.Exit(1)
+        _config_bank_new_impl(sub_name)
+        return
+
     try:
         import tomllib
     except ImportError:
@@ -153,6 +209,7 @@ def config_bank(
     path = BANKS_DIR / f"{bank}.toml"
     if not path.exists():
         typer.echo(f"No bank config found at {path}", err=True)
+        typer.echo(f"Run: expense config bank new {bank}", err=True)
         raise typer.Exit(1)
 
     content = path.read_text(encoding="utf-8")
@@ -168,7 +225,123 @@ def config_bank(
         console.print("\n[green]OK Config is valid[/green]")
 
 
-@config_app.command(name="categories")
+def _config_bank_new_impl(bank: str) -> None:
+    """Create a template bank config at ~/.expense_cli/banks/<name>.toml."""
+    path = BANKS_DIR / f"{bank}.toml"
+    if path.exists():
+        if not typer.confirm(f"{path} already exists. Overwrite?", default=False):
+            typer.echo("Aborted.")
+            return
+    BANKS_DIR.mkdir(parents=True, exist_ok=True)
+    path.write_text(_BANK_TEMPLATE, encoding="utf-8")
+    typer.echo(f"Created {path}")
+    typer.echo("Edit it to match your bank's column names, then run: expense config bank " + bank)
+
+
+@counterparties_app.callback(invoke_without_command=True)
+def _counterparties_callback(ctx: typer.Context) -> None:
+    if ctx.invoked_subcommand is None:
+        config_counterparties()
+
+
+@counterparties_app.command(name="list")
+def config_counterparties() -> None:
+    """Print and validate the counterparties config file."""
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib
+
+    if not COUNTERPARTIES_PATH.exists():
+        typer.echo(f"No counterparties config at {COUNTERPARTIES_PATH}")
+        typer.echo("\nExample template:\n")
+        typer.echo(_COUNTERPARTIES_TEMPLATE)
+        if typer.confirm(f"Create this template at {COUNTERPARTIES_PATH}?", default=False):
+            COUNTERPARTIES_PATH.parent.mkdir(parents=True, exist_ok=True)
+            COUNTERPARTIES_PATH.write_text(_COUNTERPARTIES_TEMPLATE, encoding="utf-8")
+            typer.echo(f"Created {COUNTERPARTIES_PATH} — edit it to add your rules.")
+        return
+
+    content = COUNTERPARTIES_PATH.read_text(encoding="utf-8")
+    console.print(Syntax(content, "toml", theme="ansi_dark", line_numbers=True))
+
+    config = tomllib.loads(content)
+    errors = _validate_counterparties_config(config)
+    if errors:
+        console.print("\n[red]Validation errors:[/red]")
+        for e in errors:
+            console.print(f"  [red]x[/red] {e}", highlight=False)
+    else:
+        console.print(f"\n[green]OK Config is valid ({len(config.get('counterparty', []))} entries)[/green]")
+
+
+@counterparties_app.command(name="add")
+def config_counterparties_add(
+    name: str = typer.Option(..., "--name", "-n", help="Normalized counterparty name"),
+    contains: Optional[str] = typer.Option(None, "--contains", help="Description substring to match (case-insensitive)"),
+    iban: Optional[str] = typer.Option(None, "--iban", help="Exact IBAN to match (case-insensitive)"),
+) -> None:
+    """Add a matcher to a counterparty entry (creates it if it doesn't exist yet).
+
+    If an entry for NAME already exists, the matcher is added to it.
+    Both --iban and --contains can be set on the same counterparty by running add twice.
+    To change an existing value use: expense config counterparties edit
+    """
+    from expense_cli.identifier import save_counterparty_rule, matcher_exists
+
+    if contains and iban:
+        typer.echo("Provide --contains or --iban, not both.", err=True)
+        raise typer.Exit(1)
+    if not contains and not iban:
+        typer.echo("Provide either --contains or --iban.", err=True)
+        raise typer.Exit(1)
+
+    name = name.lower()
+    matcher_type = "iban" if iban else "description_contains"
+    matcher_value = iban if iban else contains.lower()
+
+    if matcher_exists(name, matcher_type):
+        typer.echo(f"'{name}' already has a {matcher_type} matcher. Use: expense config counterparties edit --name '{name}' --{'iban' if iban else 'contains'} '<new value>'", err=True)
+        raise typer.Exit(1)
+
+    save_counterparty_rule(name, matcher_type, matcher_value)
+    console.print(f"[green]✓[/green] [bold]{name}[/bold] ← {matcher_type} [dim]{matcher_value}[/dim]", highlight=False)
+
+
+@counterparties_app.command(name="edit")
+def config_counterparties_edit(
+    name: str = typer.Option(..., "--name", "-n", help="Name of the counterparty entry to edit"),
+    new_name: Optional[str] = typer.Option(None, "--new-name", help="Rename the counterparty"),
+    contains: Optional[str] = typer.Option(None, "--contains", help="Replace the description_contains matcher"),
+    iban: Optional[str] = typer.Option(None, "--iban", help="Replace the iban matcher"),
+) -> None:
+    """Change fields on an existing counterparty entry."""
+    from expense_cli.identifier import edit_counterparty_rule
+
+    if not any([new_name, contains, iban]):
+        typer.echo("Provide at least one of --new-name, --contains, --iban.", err=True)
+        raise typer.Exit(1)
+
+    ok = edit_counterparty_rule(
+        name=name.lower(),
+        new_name=new_name.lower() if new_name else None,
+        iban=iban,
+        description_contains=contains.lower() if contains else None,
+    )
+    if not ok:
+        typer.echo(f"No counterparty entry named '{name}'.", err=True)
+        raise typer.Exit(1)
+
+    console.print(f"[green]✓[/green] Updated '{name}'.")
+
+
+@categories_app.callback(invoke_without_command=True)
+def _categories_callback(ctx: typer.Context) -> None:
+    if ctx.invoked_subcommand is None:
+        config_categories()
+
+
+@categories_app.command(name="list")
 def config_categories() -> None:
     """Print and validate the categories config file."""
     try:
@@ -177,8 +350,14 @@ def config_categories() -> None:
         import tomli as tomllib
 
     if not CATEGORIES_PATH.exists():
-        typer.echo(f"No categories config found at {CATEGORIES_PATH}", err=True)
-        raise typer.Exit(1)
+        typer.echo(f"No categories config at {CATEGORIES_PATH}")
+        typer.echo("\nExample template:\n")
+        typer.echo(_CATEGORIES_TEMPLATE)
+        if typer.confirm(f"Create this template at {CATEGORIES_PATH}?", default=False):
+            CATEGORIES_PATH.parent.mkdir(parents=True, exist_ok=True)
+            CATEGORIES_PATH.write_text(_CATEGORIES_TEMPLATE, encoding="utf-8")
+            typer.echo(f"Created {CATEGORIES_PATH} — edit it to add your rules.")
+        return
 
     content = CATEGORIES_PATH.read_text(encoding="utf-8")
     console.print(Syntax(content, "toml", theme="ansi_dark", line_numbers=True))
@@ -193,29 +372,51 @@ def config_categories() -> None:
         console.print(f"\n[green]OK Config is valid ({len(config.get('rules', []))} rules)[/green]")
 
 
-@config_app.command(name="counterparties")
-def config_counterparties() -> None:
-    """Print and validate the counterparties config file."""
-    try:
-        import tomllib
-    except ImportError:
-        import tomli as tomllib
+@categories_app.command(name="add")
+def config_categories_add(
+    counterparty: str = typer.Option(..., "--counterparty", "-c", help="Counterparty name (must match counterparties.toml)"),
+    category: str = typer.Option(..., "--category", "-k", help="Category to assign"),
+) -> None:
+    """Add a category rule (creates it if it doesn't exist yet).
 
-    if not COUNTERPARTIES_PATH.exists():
-        typer.echo(f"No counterparties config found at {COUNTERPARTIES_PATH}", err=True)
+    To change an existing rule use: expense config categories edit
+    """
+    from expense_cli.categorizer import save_category_rule, category_rule_exists
+
+    counterparty = counterparty.lower()
+    category = category.lower()
+
+    if category_rule_exists(counterparty):
+        typer.echo(f"A rule for '{counterparty}' already exists. Use: expense config categories edit --counterparty '{counterparty}' --category '<new>'", err=True)
         raise typer.Exit(1)
 
-    content = COUNTERPARTIES_PATH.read_text(encoding="utf-8")
-    console.print(Syntax(content, "toml", theme="ansi_dark", line_numbers=True))
+    save_category_rule(counterparty, category)
+    console.print(f"[green]✓[/green] [bold]{counterparty}[/bold] → [bold]{category}[/bold]")
 
-    config = tomllib.loads(content)
-    errors = _validate_counterparties_config(config)
-    if errors:
-        console.print("\n[red]Validation errors:[/red]")
-        for e in errors:
-            console.print(f"  [red]x[/red] {e}", highlight=False)
-    else:
-        console.print(f"\n[green]OK Config is valid ({len(config.get('counterparty', []))} entries)[/green]")
+
+@categories_app.command(name="edit")
+def config_categories_edit(
+    counterparty: str = typer.Option(..., "--counterparty", "-c", help="Counterparty name of the rule to edit"),
+    new_counterparty: Optional[str] = typer.Option(None, "--new-counterparty", help="Rename the counterparty key"),
+    category: Optional[str] = typer.Option(None, "--category", "-k", help="Replace the category"),
+) -> None:
+    """Change an existing category rule."""
+    from expense_cli.categorizer import edit_category_rule
+
+    if not any([new_counterparty, category]):
+        typer.echo("Provide at least one of --new-counterparty, --category.", err=True)
+        raise typer.Exit(1)
+
+    ok = edit_category_rule(
+        counterparty=counterparty.lower(),
+        new_counterparty=new_counterparty.lower() if new_counterparty else None,
+        category=category.lower() if category else None,
+    )
+    if not ok:
+        typer.echo(f"No category rule for counterparty '{counterparty}'.", err=True)
+        raise typer.Exit(1)
+
+    console.print(f"[green]✓[/green] Updated rule for '{counterparty}'.")
 
 
 @app.command()
@@ -239,6 +440,7 @@ def add(
         "weekday": _weekday_from_date(expense_date),
         "time": expense_time or "",
         "amount": f"{amount:.2f}",
+        "direction": "out" if amount < 0 else "in",
         "description": description,
         "category": category,
         "iban": iban,
@@ -257,9 +459,12 @@ def list_expenses(
     year: Optional[int] = typer.Option(None, "--year", help="Year to use with --month number (default: current year)"),
     unreviewed: bool = typer.Option(False, "--unreviewed", help="Show only expenses missing counterparty or category"),
     reviewed: bool = typer.Option(False, "--reviewed", help="Show only expenses with counterparty and category set"),
-    wide: bool = typer.Option(False, "--wide", "-w", help="Show all columns (description, IBAN, weekday, time)"),
+    wide: bool = typer.Option(False, "--wide", "-w", help="Show all columns (description, IBAN, time)"),
+    min_amount: Optional[float] = typer.Option(None, "--min", help="Hide transactions with abs(amount) below this value"),
+    max_amount: Optional[float] = typer.Option(None, "--max", help="Hide transactions with abs(amount) above this value"),
+    direction: Optional[str] = typer.Option(None, "--direction", help="Filter by direction: 'in' or 'out'"),
 ) -> None:
-    """List expenses, optionally filtered by category or date range."""
+    """List expenses, optionally filtered by category, date range, amount, or direction."""
     if month and (from_date or to_date):
         typer.echo("--month cannot be combined with --from or --to.", err=True)
         raise typer.Exit(1)
@@ -283,6 +488,12 @@ def list_expenses(
         expenses = [e for e in expenses if not e.get("counterparty") or not e["category"]]
     elif reviewed:
         expenses = [e for e in expenses if e.get("counterparty") and e["category"]]
+    if min_amount is not None:
+        expenses = [e for e in expenses if abs(float(e["amount"])) >= min_amount]
+    if max_amount is not None:
+        expenses = [e for e in expenses if abs(float(e["amount"])) <= max_amount]
+    if direction:
+        expenses = [e for e in expenses if e.get("direction") == direction]
 
     if not expenses:
         typer.echo("No expenses found.")
@@ -303,10 +514,12 @@ def list_expenses(
     table.add_column("Category")
 
     for e in expenses:
+        amt = float(e["amount"])
+        amt_str = f"[red]{e['amount']}[/red]" if amt < 0 else f"[green]{e['amount']}[/green]"
         row = [e["id"], e["date"], e.get("weekday", "")]
         if wide:
             row.append(e.get("time", ""))
-        row.append(e["amount"])
+        row.append(amt_str)
         if wide:
             row += [e.get("description", ""), e.get("iban", "")]
         row += [e.get("counterparty", ""), e["category"]]
@@ -437,10 +650,10 @@ if _sys.platform == "win32":
         ch = _msvcrt.getwch()
         if ch in ("\x00", "\xe0"):  # special key prefix
             ch2 = _msvcrt.getwch()
-            if ch2 == "\x48":
-                return "UP"
-            if ch2 == "\x50":
-                return "DOWN"
+            if ch2 == "\x48": return "UP"
+            if ch2 == "\x50": return "DOWN"
+            if ch2 == "\x4b": return "LEFT"
+            if ch2 == "\x4d": return "RIGHT"
             return None  # other special keys ignored
         return ch
 else:
@@ -456,10 +669,10 @@ else:
                 ch2 = _sys.stdin.read(1)
                 if ch2 == "[":
                     ch3 = _sys.stdin.read(1)
-                    if ch3 == "A":
-                        return "UP"
-                    if ch3 == "B":
-                        return "DOWN"
+                    if ch3 == "A": return "UP"
+                    if ch3 == "B": return "DOWN"
+                    if ch3 == "C": return "RIGHT"
+                    if ch3 == "D": return "LEFT"
                 return None
         finally:
             _termios.tcsetattr(fd, _termios.TCSADRAIN, old)
@@ -467,6 +680,74 @@ else:
 
 
 _HINT = "  \033[2mtype to filter  ·  ↑↓ more options  ·  1-9 pick  ·  ^S skip tx  ·  ^Q quit\033[0m"
+_EDIT_HINT = "  \033[2m←→ move  ·  backspace  ·  ^U clear  ·  Enter save  ·  empty skip\033[0m"
+
+
+def _input_prefilled(prompt_text: str, default: str) -> str:
+    """Show prompt with default text pre-filled and fully editable.
+
+    Supports cursor movement (←→), backspace (delete before cursor),
+    Ctrl+U (clear all), Enter (submit), empty submit = skip.
+
+    Falls back to typer.prompt when stdin is not a TTY (e.g. in tests).
+    """
+    if not _sys.stdin.isatty():
+        return typer.prompt(prompt_text, default=default)
+
+    prefix = f"  \033[1m{prompt_text}:\033[0m "
+    buffer: list[str] = list(default)
+    cursor = len(buffer)  # start at end of pre-filled text
+
+    def redraw() -> None:
+        text = "".join(buffer)
+        after = len(buffer) - cursor
+        _sys.stdout.write(f"\r\033[K{prefix}{text}")
+        if after > 0:
+            _sys.stdout.write(f"\033[{after}D")
+        _sys.stdout.flush()
+
+    # Initial render: prompt line, hint line below, cursor back on prompt line
+    _sys.stdout.write(f"\n{prefix}{''.join(buffer)}\n{_EDIT_HINT}")
+    _sys.stdout.write(f"\033[1A\r{prefix}{''.join(buffer)}")
+    _sys.stdout.flush()
+
+    while True:
+        ch = _getch()
+        if ch is None:
+            continue
+
+        if ch in ("\r", "\n"):  # Enter — submit
+            _sys.stdout.write("\n\r\033[K\033[1A\n")  # clear hint line, advance past prompt
+            _sys.stdout.flush()
+            return "".join(buffer)
+
+        if ch in ("\x08", "\x7f"):  # Backspace — delete char before cursor
+            if cursor > 0:
+                del buffer[cursor - 1]
+                cursor -= 1
+                redraw()
+
+        elif ch == "\x15":  # Ctrl+U — clear whole line
+            buffer.clear()
+            cursor = 0
+            redraw()
+
+        elif ch == "LEFT":
+            if cursor > 0:
+                cursor -= 1
+                _sys.stdout.write("\033[D")
+                _sys.stdout.flush()
+
+        elif ch == "RIGHT":
+            if cursor < len(buffer):
+                cursor += 1
+                _sys.stdout.write("\033[C")
+                _sys.stdout.flush()
+
+        elif len(ch) == 1 and ch.isprintable():
+            buffer.insert(cursor, ch)
+            cursor += 1
+            redraw()
 
 
 def _pick(prompt_text: str, options: list[str], header: str = "") -> str | object | None:
@@ -577,6 +858,9 @@ def _pick(prompt_text: str, options: list[str], header: str = "") -> str | objec
             exit_pick()
             return value
 
+        if ch in ("LEFT", "RIGHT"):  # ignored in pick
+            continue
+
         if ch in ("UP", "DOWN"):  # scroll the visible window of options
             filt = get_filtered()
             if filt:
@@ -618,8 +902,8 @@ def review(
     year: Optional[int] = typer.Option(None, "--year", "-y", help="Filter by year (e.g. 2024)"),
 ) -> None:
     """Show expenses that need manual attention (missing counterparty or category)."""
-    from expense_cli.identifier import load_counterparties
-    from expense_cli.categorizer import load_rules, categorize
+    from expense_cli.identifier import load_counterparties, rule_exists, save_counterparty_rule
+    from expense_cli.categorizer import load_rules, categorize, category_rule_exists, save_category_rule
 
     expenses = read_expenses()
 
@@ -723,6 +1007,7 @@ def review(
             if result is _SKIP:
                 skip_transaction = True
             elif result:
+                result = result.lower()
                 fields["counterparty"] = result
                 if result not in known_counterparties:
                     known_counterparties.append(result)
@@ -742,6 +1027,7 @@ def review(
             if result is _SKIP:
                 skip_transaction = True
             elif result:
+                result = result.lower()
                 fields["category"] = result
                 if result not in known_categories:
                     known_categories.append(result)
@@ -754,6 +1040,29 @@ def review(
             update_expense(int(expense["id"]), fields)
             saved += 1
             console.print(f"  [green]✓ saved[/green]")
+
+            # Offer to save counterparty as an identification rule
+            cp = fields.get("counterparty")
+            if cp and not rule_exists(cp):
+                iban = expense.get("iban", "")
+                desc = expense.get("description", "")
+                if iban:
+                    if typer.confirm(f"  Save rule: iban '{iban}' → '{cp}'?", default=True):
+                        save_counterparty_rule(cp, "iban", iban)
+                        console.print(f"  [green]✓ rule saved (iban)[/green]")
+                else:
+                    keyword = _input_prefilled(f"Keyword for '{cp}'", desc)
+                    if keyword.strip():
+                        save_counterparty_rule(cp, "description_contains", keyword.strip().lower())
+                        console.print(f"  [green]✓ rule saved (description_contains)[/green]")
+
+            # Offer to save category as a rule
+            cat = fields.get("category")
+            final_cp = fields.get("counterparty") or expense.get("counterparty", "")
+            if cat and final_cp and not category_rule_exists(final_cp):
+                if typer.confirm(f"  Save category rule '{final_cp}' → '{cat}'?", default=False):
+                    save_category_rule(final_cp, cat)
+                    console.print(f"  [green]✓ category rule saved[/green]")
         else:
             console.print(f"  [dim]skipped[/dim]")
 

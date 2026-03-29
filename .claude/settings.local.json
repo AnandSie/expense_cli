@@ -21,7 +21,24 @@
       "Bash(.venv/Scripts/python -m pytest -q)",
       "Bash(.venv/Scripts/python -m pytest tests/test_cli.py -k \"month\" -q)",
       "Bash(.venv/Scripts/python -m pytest tests/test_cli.py -k \"wide or hides\" -q)",
-      "Bash(.venv/Scripts/python -m pytest tests/test_cli.py::test_list_wide_shows_description -q -s)"
+      "Bash(.venv/Scripts/python -m pytest tests/test_cli.py::test_list_wide_shows_description -q -s)",
+      "Bash(.venv/Scripts/python -m pytest tests/ -k \"direction or test_add_positive or test_add_negative or test_list_filter_by_min or test_list_filter_by_max or test_migration_backfills\" -q)",
+      "Bash(.venv/Scripts/python -m pytest tests/test_cli.py::test_add_negative_amount_stores_direction_out -q -s)",
+      "Bash(.venv/Scripts/python -m pytest tests/test_cli.py -k \"config_counterparties or config_categories or config_bank\" -q)",
+      "Bash(.venv/Scripts/python -m pytest tests/test_cli.py::test_config_counterparties_missing_offers_template -q -s)",
+      "Bash(.venv/Scripts/pytest tests/test_cli.py::test_config_counterparties_missing_offers_template tests/test_cli.py::test_config_counterparties_missing_creates_file tests/test_cli.py::test_config_counterparties_existing_shows_content tests/test_cli.py::test_config_categories_missing_offers_template tests/test_cli.py::test_config_categories_missing_creates_file tests/test_cli.py::test_config_bank_new_creates_template tests/test_cli.py::test_config_bank_new_does_not_overwrite_without_confirm tests/test_cli.py::test_config_bank_missing_suggests_new -v 2>&1)",
+      "Bash(.venv/Scripts/python -c \"\nfrom typer.testing import CliRunner\nfrom expense_cli.cli import app\nrunner = CliRunner\\(\\)\nresult = runner.invoke\\(app, ['config', 'bank', 'new', 'mybank']\\)\nprint\\('exit_code:', result.exit_code\\)\nprint\\('output:', result.output\\)\nif result.exception:\n    import traceback\n    traceback.print_exception\\(type\\(result.exception\\), result.exception, result.exception.__traceback__\\)\n\")",
+      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python -c \"\nfrom typer.testing import CliRunner\nfrom expense_cli.cli import app\nrunner = CliRunner\\(\\)\nresult = runner.invoke\\(app, ['config', 'bank', 'new', 'mybank']\\)\nimport sys\nsys.stdout.buffer.write\\(b'exit_code: ' + str\\(result.exit_code\\).encode\\(\\) + b'\\\\n'\\)\nsys.stdout.buffer.write\\(b'output: ' + result.output.encode\\('utf-8'\\) + b'\\\\n'\\)\n\" 2>&1)",
+      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/pytest tests/test_cli.py::test_config_bank_new_creates_template tests/test_cli.py::test_config_bank_new_does_not_overwrite_without_confirm tests/test_cli.py::test_config_bank_missing_suggests_new -v 2>&1)",
+      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/pytest tests/test_cli.py::test_config_counterparties_missing_offers_template tests/test_cli.py::test_config_counterparties_missing_creates_file tests/test_cli.py::test_config_counterparties_existing_shows_content tests/test_cli.py::test_config_categories_missing_offers_template tests/test_cli.py::test_config_categories_missing_creates_file tests/test_cli.py::test_config_bank_new_creates_template tests/test_cli.py::test_config_bank_new_does_not_overwrite_without_confirm tests/test_cli.py::test_config_bank_missing_suggests_new -v 2>&1)",
+      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/pytest -v 2>&1)",
+      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/pytest -v --tb=short)",
+      "Bash(.venv/Scripts/pytest tests/test_toml_store.py tests/test_identifier.py tests/test_categorizer.py -v 2>&1)",
+      "Bash(.venv/Scripts/pytest)",
+      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/pytest tests/test_cli.py::test_review_interactive_saves_iban_rule tests/test_cli.py::test_review_interactive_skips_iban_rule_when_declined tests/test_cli.py::test_review_interactive_saves_description_rule_when_no_iban tests/test_cli.py::test_review_interactive_skips_description_rule_when_cleared -v 2>&1)",
+      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/pytest tests/test_cli.py::test_review_interactive_saves_iban_rule tests/test_cli.py::test_review_interactive_skips_iban_rule_when_declined tests/test_cli.py::test_review_interactive_saves_description_rule_when_no_iban tests/test_cli.py::test_review_interactive_skips_description_rule_when_cleared -v --timeout=30 2>&1)",
+      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/pytest tests/test_cli.py::test_review_interactive_saves_iban_rule tests/test_cli.py::test_review_interactive_skips_iban_rule_when_declined tests/test_cli.py::test_review_interactive_saves_description_rule_accepting_default tests/test_cli.py::test_review_interactive_saves_custom_keyword -v 2>&1)",
+      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/pytest --tb=short)"
     ]
   }
 }

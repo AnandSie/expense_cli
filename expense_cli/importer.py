@@ -112,10 +112,12 @@ def _read_xls_file(filepath: str, config: dict) -> list[dict]:
         time_format = bank_cfg.get("time_format")
         raw = {name: str(sheet.cell(row_idx, col_index[name]).value).strip() for name in col_index}
         # TODO instead of hardcoded fieldnames here, maybe we can define and create an class/record/datatype
+        parsed_amount = amount_cell.value if amount_cell.ctype == xlrd.XL_CELL_NUMBER else parse_amount(str(amount_cell.value), decimal_separator)
         row = {
             "date": date_val,
             "time": parse_time(raw[mapping["time"]], time_format) if "time" in mapping and time_format else "",
             "amount": amount_val,
+            "direction": "out" if parsed_amount < 0 else "in",
             "description": str(cell(mapping["description"]).value).strip() if "description" in mapping else "",
             "iban": _extract_field(mapping["iban"], raw) if "iban" in mapping else "",
             "counterparty": _extract_field(mapping["counterparty"], raw) if "counterparty" in mapping else "",
@@ -145,10 +147,12 @@ def read_bank_file(filepath: str, config: dict) -> list[dict]:
     rows = []
     with open(filepath, newline="", encoding=encoding) as f:
         for raw in csv.DictReader(f, delimiter=delimiter):
+            parsed_amount = parse_amount(raw[mapping["amount"]], decimal_separator)
             row = {
                 "date": parse_date(raw[mapping["date"]], date_format),
                 "time": parse_time(raw[mapping["time"]], time_format) if "time" in mapping and time_format else "",
-                "amount": f"{parse_amount(raw[mapping['amount']], decimal_separator):.2f}",
+                "amount": f"{parsed_amount:.2f}",
+                "direction": "out" if parsed_amount < 0 else "in",
                 "description": raw.get(mapping.get("description", ""), "").strip(),
                 "iban": _extract_field(mapping["iban"], raw) if "iban" in mapping else "",
                 "counterparty": _extract_field(mapping["counterparty"], raw) if "counterparty" in mapping else "",

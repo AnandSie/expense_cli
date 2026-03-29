@@ -102,3 +102,23 @@ def test_migration_clears_uncategorized_sentinel(tmp_storage):
         writer.writeheader()
         writer.writerow({**make_row(), "category": "uncategorized"})
     assert read_expenses()[0]["category"] == ""
+
+
+def test_migration_backfills_direction_positive(tmp_storage):
+    old_fields = [f for f in FIELDNAMES if f != "direction"]
+    with storage.CSV_PATH.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=old_fields)
+        writer.writeheader()
+        writer.writerow({f: make_row().get(f, "") for f in old_fields})  # amount=10.00
+    assert read_expenses()[0]["direction"] == "in"
+
+
+def test_migration_backfills_direction_negative(tmp_storage):
+    old_fields = [f for f in FIELDNAMES if f != "direction"]
+    with storage.CSV_PATH.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=old_fields)
+        writer.writeheader()
+        row = {f: make_row().get(f, "") for f in old_fields}
+        row["amount"] = "-10.00"
+        writer.writerow(row)
+    assert read_expenses()[0]["direction"] == "out"

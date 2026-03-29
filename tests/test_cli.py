@@ -125,6 +125,58 @@ def test_version():
     assert "0.1.0" in result.output
 
 
+# --- CLI: config bootstrap ---
+
+def test_config_counterparties_missing_offers_template(tmp_storage):
+    result = runner.invoke(app, ["config", "counterparties"], input="n\n")
+    assert result.exit_code == 0
+    assert "[[counterparty]]" in result.output
+
+
+def test_config_counterparties_missing_creates_file(tmp_storage):
+    runner.invoke(app, ["config", "counterparties"], input="y\n")
+    assert (tmp_storage / "counterparties.toml").exists()
+
+
+def test_config_counterparties_existing_shows_content(tmp_storage):
+    (tmp_storage / "counterparties.toml").write_text(
+        '[[counterparty]]\niban = "NL91"\nname = "Test"\n', encoding="utf-8"
+    )
+    result = runner.invoke(app, ["config", "counterparties"])
+    assert result.exit_code == 0
+    assert "NL91" in result.output
+
+
+def test_config_categories_missing_offers_template(tmp_storage):
+    result = runner.invoke(app, ["config", "categories"], input="n\n")
+    assert result.exit_code == 0
+    assert "[[rules]]" in result.output
+
+
+def test_config_categories_missing_creates_file(tmp_storage):
+    runner.invoke(app, ["config", "categories"], input="y\n")
+    assert (tmp_storage / "categories.toml").exists()
+
+
+def test_config_bank_new_creates_template(tmp_storage):
+    result = runner.invoke(app, ["config", "bank", "new", "mybank"])
+    assert result.exit_code == 0
+    assert (tmp_storage / "banks" / "mybank.toml").exists()
+
+
+def test_config_bank_new_does_not_overwrite_without_confirm(tmp_storage):
+    runner.invoke(app, ["config", "bank", "new", "mybank"])
+    runner.invoke(app, ["config", "bank", "new", "mybank"], input="n\n")
+    # file should still be the original template (not crashed)
+    assert (tmp_storage / "banks" / "mybank.toml").exists()
+
+
+def test_config_bank_missing_suggests_new(tmp_storage):
+    result = runner.invoke(app, ["config", "bank", "mybank"])
+    assert result.exit_code != 0
+    assert "new" in result.output
+
+
 # --- CLI: add + list ---
 
 def test_add_and_list(tmp_storage):
@@ -143,6 +195,16 @@ def test_add_and_list(tmp_storage):
 def test_add_default_category_is_empty(tmp_storage):
     runner.invoke(app, ["add", "10.00", "Test"])
     assert read_expenses()[0]["category"] == ""
+
+
+def test_add_positive_amount_stores_direction_in(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "Salary"])
+    assert read_expenses()[0]["direction"] == "in"
+
+
+def test_add_negative_amount_stores_direction_out(tmp_storage):
+    runner.invoke(app, ["add", "--", "-10.00", "Coffee"])
+    assert read_expenses()[0]["direction"] == "out"
 
 
 def test_add_with_explicit_category(tmp_storage):
@@ -202,6 +264,38 @@ def test_list_wide_shows_iban(tmp_storage):
     runner.invoke(app, ["add", "10.00", "Test", "--iban", "NL91ABNA0417164300"])
     result = runner.invoke(app, ["list", "-w"])
     assert "IBAN" in result.output
+
+
+def test_list_filter_by_min(tmp_storage):
+    runner.invoke(app, ["add", "--", "-3.00", "Small"])
+    runner.invoke(app, ["add", "--", "-50.00", "Big"])
+    result = runner.invoke(app, ["list", "--min", "10"])
+    assert "-50.00" in result.output
+    assert "-3.00" not in result.output
+
+
+def test_list_filter_by_max(tmp_storage):
+    runner.invoke(app, ["add", "--", "-3.00", "Small"])
+    runner.invoke(app, ["add", "--", "-50.00", "Big"])
+    result = runner.invoke(app, ["list", "--max", "10"])
+    assert "-3.00" in result.output
+    assert "-50.00" not in result.output
+
+
+def test_list_filter_by_direction_out(tmp_storage):
+    runner.invoke(app, ["add", "--", "-42.00", "Expense"])
+    runner.invoke(app, ["add", "200.00", "Salary"])
+    result = runner.invoke(app, ["list", "--direction", "out"])
+    assert "-42.00" in result.output
+    assert "200.00" not in result.output
+
+
+def test_list_filter_by_direction_in(tmp_storage):
+    runner.invoke(app, ["add", "--", "-42.00", "Expense"])
+    runner.invoke(app, ["add", "200.00", "Salary"])
+    result = runner.invoke(app, ["list", "--direction", "in"])
+    assert "200.00" in result.output
+    assert "-42.00" not in result.output
 
 
 def test_list_filter_by_category(tmp_storage):
@@ -336,6 +430,45 @@ def test_review_uncategorized_filter(tmp_storage):
     result = runner.invoke(app, ["review", "--uncategorized"])
     assert "10.00" in result.output
     assert "20.00" not in result.output
+
+
+def test_review_interactive_saves_iban_rule(tmp_storage, monkeypatch):
+    """IBAN present → confirm y → iban rule created."""
+    runner.invoke(app, ["add", "10.00", "Groceries", "--iban", "NL91ABNA0417164300", "--category", "food"])
+    monkeypatch.setattr("expense_cli.cli._pick", lambda *a, **kw: "albert heijn")
+    runner.invoke(app, ["review", "-i"], input="y\n")
+    from expense_cli.identifier import load_counterparties
+    rules = load_counterparties()
+    assert any(r.get("iban") == "NL91ABNA0417164300" for r in rules)
+
+
+def test_review_interactive_skips_iban_rule_when_declined(tmp_storage, monkeypatch):
+    """IBAN present → confirm n → no rule saved."""
+    runner.invoke(app, ["add", "10.00", "Groceries", "--iban", "NL91ABNA0417164300", "--category", "food"])
+    monkeypatch.setattr("expense_cli.cli._pick", lambda *a, **kw: "albert heijn")
+    runner.invoke(app, ["review", "-i"], input="n\n")
+    from expense_cli.identifier import load_counterparties
+    assert load_counterparties() == []
+
+
+def test_review_interactive_saves_description_rule_accepting_default(tmp_storage, monkeypatch):
+    """No IBAN → press Enter to accept pre-filled description → rule saved."""
+    runner.invoke(app, ["add", "10.00", "SPOTIFY PREMIUM", "--category", "subscriptions"])
+    monkeypatch.setattr("expense_cli.cli._pick", lambda *a, **kw: "spotify")
+    runner.invoke(app, ["review", "-i"], input="\n")
+    from expense_cli.identifier import load_counterparties
+    rules = load_counterparties()
+    assert any(r.get("description_contains") == "spotify premium" for r in rules)
+
+
+def test_review_interactive_saves_custom_keyword(tmp_storage, monkeypatch):
+    """No IBAN → user types a shorter keyword → rule saved with that keyword."""
+    runner.invoke(app, ["add", "10.00", "SPOTIFY PREMIUM MONTHLY", "--category", "subscriptions"])
+    monkeypatch.setattr("expense_cli.cli._pick", lambda *a, **kw: "spotify")
+    runner.invoke(app, ["review", "-i"], input="spotify\n")
+    from expense_cli.identifier import load_counterparties
+    rules = load_counterparties()
+    assert any(r.get("description_contains") == "spotify" for r in rules)
 
 
 # --- CLI: import ---
