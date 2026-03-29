@@ -3,17 +3,11 @@ try:
 except ImportError:
     import tomli as tomllib
 from pathlib import Path
-from typing import TypedDict
 
 CATEGORIES_PATH = Path.home() / ".expense_cli" / "categories.toml"
 
 
-class CategoryRule(TypedDict):
-    counterparty: str
-    category: str
-
-
-def load_rules() -> list[CategoryRule]:
+def load_rules() -> list[dict[str, str]]:
     if not CATEGORIES_PATH.exists():
         return []
     with CATEGORIES_PATH.open("rb") as f:
@@ -21,7 +15,7 @@ def load_rules() -> list[CategoryRule]:
     return data.get("rules", [])
 
 
-def categorize(counterparty: str, rules: list[CategoryRule]) -> str:
+def categorize(counterparty: str, rules: list[dict[str, str]]) -> str:
     """Return the first matching category, or empty string if no rule matches."""
     counterparty_lower = counterparty.lower()
 
