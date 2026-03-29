@@ -6,16 +6,16 @@ from pathlib import Path
 
 CATEGORIES_PATH = Path.home() / ".expense_cli" / "categories.toml"
 
-# TODO: define the dict more specific
-def load_rules() -> list[dict]:
+
+def load_rules() -> list[dict[str, str]]:
     if not CATEGORIES_PATH.exists():
         return []
     with CATEGORIES_PATH.open("rb") as f:
         data = tomllib.load(f)
     return data.get("rules", [])
 
-# TODO: define the dict more specific
-def categorize(counterparty: str, rules: list[dict]) -> str:
+
+def categorize(counterparty: str, rules: list[dict[str, str]]) -> str:
     """Return the first matching category, or empty string if no rule matches."""
     counterparty_lower = counterparty.lower()
 
