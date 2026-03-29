@@ -31,6 +31,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `identifier.py` — counterparty resolution only.
 - `categorizer.py` — category assignment only.
 
+## Ideas & Backlog
+
+See [`IDEAS.md`](IDEAS.md) for a prioritized list of future features — especially the **Insights** section, which covers summary/aggregation commands, subscription detection, fixed vs variable spend, and month-over-month trends. Consult it when working on anything analytics-related.
+
 ## Project Overview
 
 A small Python CLI for tracking and categorizing personal expenses. Uses CSV for storage, TOML for configuration, and Typer + Rich for the CLI.
@@ -62,12 +66,13 @@ Tests live in `tests/` and use `tmp_path` + `monkeypatch` to redirect `~/.expens
 ## Key Commands
 
 ```bash
-expense add <amount> <description> [--category CAT] [--date DATE] [--iban IBAN] [--counterparty NAME]
+expense add <amount> <description> [--category CAT] [--date DATE] [--time TIME] [--iban IBAN] [--counterparty NAME]
 expense list [--category CAT] [--from DATE] [--to DATE] [--unreviewed] [--reviewed]
-expense import <file> --bank <bank_name>
-expense review [--unidentified] [--uncategorized]
+expense import <file> --bank <bank_name> [--force]
+expense review [--unidentified] [--uncategorized] [--interactive|-i]
 expense edit <id> [--iban IBAN] [--counterparty NAME] [--category CAT]
-expense remove <id> [--yes]
+expense delete <id> [--yes]
+expense delete --all
 expense config bank-list
 expense config bank <bank_name>
 expense config counterparties
@@ -80,7 +85,7 @@ expense version
 The app is structured in five layers:
 
 1. **`cli.py`** — Typer commands; the only entry point. Calls into storage, importer, identifier, and categorizer. Also contains `config` subcommands for inspecting and validating all TOML configs.
-2. **`storage.py`** — CSV persistence at `~/.expense_cli/expenses.csv`. Handles auto-migration of missing columns, the legacy `name→counterparty` column rename, and the `"uncategorized"` sentinel → empty string. Exposes `update_expense()` and `remove_expense()` for in-place edits and deletion.
+2. **`storage.py`** — CSV persistence at `~/.expense_cli/expenses.csv`. Handles auto-migration of missing columns, the legacy `name→counterparty` column rename, and the `"uncategorized"` sentinel → empty string. Exposes `update_expense()`, `delete_expense()`, and `reset_expenses()` for in-place edits and deletion.
 3. **`importer.py`** — Parses bank statement files (CSV, TAB, XLS) using bank-specific TOML configs (`~/.expense_cli/banks/<name>.toml`). Handles encoding, delimiters, date formats, and decimal separators per bank. XLS (Excel 97-2003) is read via `xlrd`; date/amount cells are handled by type (numeric date serial → `xlrd.xldate_as_datetime`, number cells used directly). Field mapping supports a flexible config: either a plain string (column name) or a dict with `column` and/or `from_column`+`pattern` (regex with optional capture group).
 4. **`identifier.py`** — Resolves raw import data to a normalized counterparty name using `~/.expense_cli/counterparties.toml`. Matches by exact IBAN first, then `description_contains` substring. Only runs if no counterparty was set during import mapping.
 5. **`categorizer.py`** — Assigns a category from `~/.expense_cli/categories.toml` by matching the normalized counterparty name (exact, case-insensitive).
@@ -103,12 +108,58 @@ All user data and config lives under `~/.expense_cli/`:
 
 A transaction is **reviewed** when it has both `counterparty` and `category` set (non-empty). IBAN is a helper for identification only — not part of the reviewed definition.
 
-- `expense review` / `expense list --unreviewed` — show transactions needing attention
-- `expense list --reviewed` — show fully resolved transactions
+- `expense review` — show all unreviewed (missing counterparty OR category)
+- `expense review --unidentified` — only missing counterparty
+- `expense review --uncategorized` — only missing category
+- `expense list --unreviewed` / `--reviewed` — filter the full list
+
+## Interactive Review (`review -i`)
+
+Steps through unreviewed expenses one at a time. For each expense:
+1. Shows date, amount, IBAN, and description (description last — it can be long)
+2. If counterparty is missing: prompts for it
+3. If category is missing: prompts for it; auto-suggests based on `categories.toml` if counterparty matched
+
+The prompt UI (`_pick` in `cli.py`) uses raw terminal input with three lines:
+- **prompt line** — where the user types
+- **options line** — live-filtered shortcuts (updates on every keystroke)
+- **hint line** — always visible, erased after each field is submitted
+
+Controls:
+- **type** → filters the options list live (case-insensitive substring)
+- **digit** → instantly picks from the current filtered list (works even mid-word)
+- **Enter** → submits typed value, or skips field if empty
+- **Ctrl+S** → skips the whole transaction (move to next)
+- **Ctrl+Q** → quits the session
+
+Known counterparties come from existing `expenses.csv` values + `counterparties.toml` names. Known categories come from existing values + `categories.toml` rules. New values typed during review are added to the shortcut list for the rest of the session.
+
+`Console(highlight=False)` is set globally — Rich auto-highlighting is disabled to prevent bank data (dates, numbers, IBANs) from being colored unexpectedly.
+
+## Delete
+
+- `expense delete <id> [--yes]` — delete a single expense; prompts for confirmation unless `--yes`
+- `expense delete --all` — wipe all expenses; requires typing `DELETE` to confirm
+
+## Data Model
+
+`FIELDNAMES` in `storage.py`:
+```
+id, date, weekday, time, amount, description, iban, counterparty, category, source_hash
+```
+
+- `weekday` — derived from `date` by the caller (cli.py or migration), never by storage write functions
+- `time` — stored as `HH:MM:SS`; empty string if not available
+- `source_hash` — 16-char SHA-256 of all raw bank file columns; used for deduplication; never displayed
 
 ## Import Deduplication
 
-`expense import` deduplicates by checking (date, amount, iban, description) against existing rows before writing — done in `cli.py`, not `storage.py`.
+`expense import` deduplicates using `source_hash` (SHA-256 of all raw bank columns, including columns not stored in the data model like `BeginSaldo`/`EindSaldo`). This handles cases where two legitimate transactions share the same date, amount, IBAN, and description but differ in other bank-provided fields.
+
+- If a row has no `source_hash` (rows imported before this feature), falls back to `(date, amount, iban, description)` tuple comparison.
+- Duplicate rows are shown in a table so the user can inspect them.
+- `--force` bypasses deduplication entirely and imports all rows.
+- Deduplication logic lives in `cli.py`, not `storage.py`.
 
 ## Bank Config Mapping
 

@@ -6,7 +6,7 @@ from pathlib import Path
 
 CATEGORIES_PATH = Path.home() / ".expense_cli" / "categories.toml"
 
-
+# TODO: define the dict more specific
 def load_rules() -> list[dict]:
     if not CATEGORIES_PATH.exists():
         return []
@@ -14,7 +14,7 @@ def load_rules() -> list[dict]:
         data = tomllib.load(f)
     return data.get("rules", [])
 
-
+# TODO: define the dict more specific
 def categorize(counterparty: str, rules: list[dict]) -> str:
     """Return the first matching category, or empty string if no rule matches."""
     counterparty_lower = counterparty.lower()

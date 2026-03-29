@@ -135,6 +135,8 @@ def test_add_and_list(tmp_storage):
     result = runner.invoke(app, ["list"])
     assert result.exit_code == 0
     assert "12.50" in result.output
+
+    result = runner.invoke(app, ["list", "--wide"])
     assert "Coffee" in result.output
 
 
@@ -175,6 +177,31 @@ def test_import_stores_weekday(tmp_storage):
 def test_list_empty(tmp_storage):
     result = runner.invoke(app, ["list"])
     assert "No expenses found" in result.output
+
+
+def test_list_default_hides_description(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "Desc"])
+    result = runner.invoke(app, ["list"])
+    # Description column should not appear in compact mode
+    assert "Description" not in result.output
+
+
+def test_list_default_hides_iban(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "Test", "--iban", "NL91ABNA0417164300"])
+    result = runner.invoke(app, ["list"])
+    assert "IBAN" not in result.output
+
+
+def test_list_wide_shows_description(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "Desc"])
+    result = runner.invoke(app, ["list", "--wide"])
+    assert "Description" in result.output
+
+
+def test_list_wide_shows_iban(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "Test", "--iban", "NL91ABNA0417164300"])
+    result = runner.invoke(app, ["list", "-w"])
+    assert "IBAN" in result.output
 
 
 def test_list_filter_by_category(tmp_storage):
@@ -356,6 +383,136 @@ def test_import_deduplication(tmp_storage):
     assert "skipped 1 duplicates" in result.output
     assert len(read_expenses()) == 1
 
+
+def test_import_force_bypasses_deduplication(tmp_storage):
+    """--force re-imports even rows that would normally be skipped as duplicates."""
+    _write_bank_config(tmp_storage)
+    csv_file = tmp_storage / "statement.csv"
+    _write_csv(csv_file, [
+        {"Date": "2026-01-01", "Amount": "42.50", "Description": "Groceries",
+         "IBAN": "NL91ABNA0417164300", "Counterparty": "Albert Heijn"},
+    ])
+    runner.invoke(app, ["import", str(csv_file), "--bank", "test_bank"])
+    result = runner.invoke(app, ["import", str(csv_file), "--bank", "test_bank", "--force"])
+    assert result.exit_code == 0
+    assert len(read_expenses()) == 2
+
+
+def test_import_same_key_different_raw_not_deduplicated(tmp_storage):
+    """Two rows with identical mapped fields but differing extra columns are both imported."""
+    _write_bank_config(tmp_storage)
+    csv_file = tmp_storage / "statement.csv"
+    # Write CSV with an extra column (BeginSaldo) that differs between the two rows
+    with csv_file.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["Date", "Amount", "Description", "IBAN", "Counterparty", "BeginSaldo"])
+        w.writeheader()
+        w.writerow({"Date": "2026-01-01", "Amount": "100.00", "Description": "Savings",
+                    "IBAN": "NL91ABNA0417164300", "Counterparty": "Savings Account", "BeginSaldo": "1000.00"})
+        w.writerow({"Date": "2026-01-01", "Amount": "100.00", "Description": "Savings",
+                    "IBAN": "NL91ABNA0417164300", "Counterparty": "Savings Account", "BeginSaldo": "900.00"})
+    result = runner.invoke(app, ["import", str(csv_file), "--bank", "test_bank"])
+    assert result.exit_code == 0
+    assert len(read_expenses()) == 2
+
+
+# --- CLI: summary ---
+
+def test_summary_empty(tmp_storage):
+    result = runner.invoke(app, ["summary"])
+    assert result.exit_code == 0
+    assert "No expenses" in result.output
+
+
+def test_summary_groups_by_category(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--category", "groceries"])
+    runner.invoke(app, ["add", "20.00", "B", "--category", "groceries"])
+    runner.invoke(app, ["add", "15.00", "C", "--category", "transport"])
+    result = runner.invoke(app, ["summary"])
+    assert result.exit_code == 0
+    assert "groceries" in result.output
+    assert "transport" in result.output
+    assert "30.00" in result.output  # groceries total
+    assert "15.00" in result.output  # transport total
+
+
+def test_summary_shows_percentage(tmp_storage):
+    runner.invoke(app, ["add", "75.00", "A", "--category", "groceries"])
+    runner.invoke(app, ["add", "25.00", "B", "--category", "transport"])
+    result = runner.invoke(app, ["summary"])
+    assert "75" in result.output   # 75%
+    assert "25" in result.output   # 25%
+
+
+def test_summary_shows_count(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--category", "groceries"])
+    runner.invoke(app, ["add", "10.00", "B", "--category", "groceries"])
+    result = runner.invoke(app, ["summary"])
+    assert "2" in result.output
+
+
+def test_summary_sorted_by_amount_descending(tmp_storage):
+    runner.invoke(app, ["add", "5.00", "A", "--category", "transport"])
+    runner.invoke(app, ["add", "50.00", "B", "--category", "groceries"])
+    result = runner.invoke(app, ["summary"])
+    assert result.output.index("groceries") < result.output.index("transport")
+
+
+def test_summary_uncategorized_grouped(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A"])  # no category
+    result = runner.invoke(app, ["summary"])
+    assert result.exit_code == 0
+    assert "10.00" in result.output
+
+
+def test_summary_filter_by_date(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--category", "groceries", "--date", "2026-01-01"])
+    runner.invoke(app, ["add", "20.00", "B", "--category", "groceries", "--date", "2026-03-01"])
+    result = runner.invoke(app, ["summary", "--from", "2026-02-01"])
+    assert "20.00" in result.output
+    assert "10.00" not in result.output
+
+
+def test_summary_filter_by_month_year_month_format(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--category", "groceries", "--date", "2026-01-15"])
+    runner.invoke(app, ["add", "20.00", "B", "--category", "groceries", "--date", "2026-03-10"])
+    result = runner.invoke(app, ["summary", "--month", "2026-01"])
+    assert "10.00" in result.output
+    assert "20.00" not in result.output
+
+
+def test_summary_filter_by_month_number(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--category", "groceries", "--date", "2026-01-15"])
+    runner.invoke(app, ["add", "20.00", "B", "--category", "groceries", "--date", "2026-03-10"])
+    result = runner.invoke(app, ["summary", "--month", "1", "--year", "2026"])
+    assert "10.00" in result.output
+    assert "20.00" not in result.output
+
+
+def test_summary_month_and_from_are_exclusive(tmp_storage):
+    result = runner.invoke(app, ["summary", "--month", "2026-01", "--from", "2026-01-01"])
+    assert result.exit_code == 1
+
+
+def test_list_filter_by_month(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--date", "2026-01-15"])
+    runner.invoke(app, ["add", "20.00", "B", "--date", "2026-03-10"])
+    result = runner.invoke(app, ["list", "--month", "2026-01"])
+    assert "10.00" in result.output
+    assert "20.00" not in result.output
+
+
+def test_summary_by_counterparty(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--counterparty", "Albert Heijn"])
+    runner.invoke(app, ["add", "20.00", "B", "--counterparty", "Albert Heijn"])
+    runner.invoke(app, ["add", "15.00", "C", "--counterparty", "NS"])
+    result = runner.invoke(app, ["summary", "--by", "counterparty"])
+    assert "Albert Heijn" in result.output
+    assert "NS" in result.output
+    assert "30.00" in result.output
+    assert "15.00" in result.output
+
+
+# --- CLI: import ---
 
 def test_import_auto_categorization(tmp_storage):
     _write_bank_config(tmp_storage)

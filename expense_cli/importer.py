@@ -1,4 +1,6 @@
 import csv
+import hashlib
+import json
 import re
 try:
     import tomllib
@@ -12,6 +14,13 @@ import xlrd
 BANKS_DIR = Path.home() / ".expense_cli" / "banks"
 
 
+# TODO: return type of dict is not sufficient for type level strict
+def _hash_raw(raw: dict) -> str:
+    """Return a short hash of all raw bank row values for deduplication."""
+    serialized = json.dumps(raw, sort_keys=True)
+    return hashlib.sha256(serialized.encode()).hexdigest()[:16]
+
+
 def load_bank_config(bank_name: str) -> dict:
     path = BANKS_DIR / f"{bank_name}.toml"
     if not path.exists():
@@ -22,7 +31,7 @@ def load_bank_config(bank_name: str) -> dict:
     with path.open("rb") as f:
         return tomllib.load(f)
 
-
+# TODO: missing type for field_config and dict
 def _extract_field(field_config, raw: dict) -> str:
     """Resolve a flexible mapping config to a string value.
 
@@ -102,6 +111,7 @@ def _read_xls_file(filepath: str, config: dict) -> list[dict]:
 
         time_format = bank_cfg.get("time_format")
         raw = {name: str(sheet.cell(row_idx, col_index[name]).value).strip() for name in col_index}
+        # TODO instead of hardcoded fieldnames here, maybe we can define and create an class/record/datatype
         row = {
             "date": date_val,
             "time": parse_time(raw[mapping["time"]], time_format) if "time" in mapping and time_format else "",
@@ -109,6 +119,7 @@ def _read_xls_file(filepath: str, config: dict) -> list[dict]:
             "description": str(cell(mapping["description"]).value).strip() if "description" in mapping else "",
             "iban": _extract_field(mapping["iban"], raw) if "iban" in mapping else "",
             "counterparty": _extract_field(mapping["counterparty"], raw) if "counterparty" in mapping else "",
+            "source_hash": _hash_raw(raw),
         }
         rows.append(row)
     return rows
@@ -123,7 +134,8 @@ def read_bank_file(filepath: str, config: dict) -> list[dict]:
 
     bank_cfg = config.get("bank", {})
     mapping = config["mapping"]
-
+    
+    # TODO: maybe we can define a type for the bank_cfg such that we know what is in it and then we don't have to use a get based on a static string
     encoding = bank_cfg.get("encoding", "utf-8")
     date_format = bank_cfg.get("date_format", "%Y-%m-%d")
     time_format = bank_cfg.get("time_format")
@@ -140,6 +152,7 @@ def read_bank_file(filepath: str, config: dict) -> list[dict]:
                 "description": raw.get(mapping.get("description", ""), "").strip(),
                 "iban": _extract_field(mapping["iban"], raw) if "iban" in mapping else "",
                 "counterparty": _extract_field(mapping["counterparty"], raw) if "counterparty" in mapping else "",
+                "source_hash": _hash_raw(dict(raw)),
             }
             rows.append(row)
     return rows

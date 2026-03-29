@@ -5,10 +5,13 @@ from pathlib import Path
 DATA_DIR = Path.home() / ".expense_cli"
 CSV_PATH = DATA_DIR / "expenses.csv"
 
-FIELDNAMES = ["id", "date", "weekday", "time", "amount", "description", "iban", "counterparty", "category"]
+# TODO: create a type/datatype/record which we can read in, instead of hardcode strings 
+FIELDNAMES = ["id", "date", "weekday", "time", "amount", "description", "iban", "counterparty", "category", "source_hash"]
 
+# TODO: can we maybe create a seperate csv storage next to normal storage for decoupling, next to this generic core stoarge
 
 def _weekday_from_date(date_str: str) -> str:
+    # TODO: this strptime 
     return datetime.strptime(date_str, "%Y-%m-%d").strftime("%A")
 
 

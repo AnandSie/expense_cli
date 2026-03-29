@@ -11,7 +11,17 @@
       "Bash(.venv/Scripts/pytest tests/test_storage.py tests/test_cli.py --tb=line -q)",
       "Bash(.venv/Scripts/pytest tests/test_cli.py -k reset --tb=line -q 2>&1)",
       "Bash(.venv/Scripts/pytest --tb=short -q)",
-      "Bash(python -m pytest tests/test_cli.py -x -q)"
+      "Bash(python -m pytest tests/test_cli.py -x -q)",
+      "Bash(.venv/Scripts/python -m pytest tests/test_cli.py -x -q)",
+      "Bash(.venv/Scripts/python -m pytest -x -q)",
+      "Bash(.venv/Scripts/python -m pytest tests/test_cli.py::test_import_same_key_different_raw_not_deduplicated -x -q)",
+      "Bash(.venv/Scripts/python -m pytest tests/test_cli.py::test_import_force_bypasses_deduplication -x -q)",
+      "Bash(.venv/Scripts/python -m pytest tests/test_cli.py -k \"summary\" -x -q)",
+      "Bash(.venv/Scripts/python -m pytest tests/test_cli.py -k \"summary\" -q)",
+      "Bash(.venv/Scripts/python -m pytest -q)",
+      "Bash(.venv/Scripts/python -m pytest tests/test_cli.py -k \"month\" -q)",
+      "Bash(.venv/Scripts/python -m pytest tests/test_cli.py -k \"wide or hides\" -q)",
+      "Bash(.venv/Scripts/python -m pytest tests/test_cli.py::test_list_wide_shows_description -q -s)"
     ]
   }
 }

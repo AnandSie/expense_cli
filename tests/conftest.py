@@ -1,4 +1,11 @@
 import pytest
+from rich.console import Console
+
+
+@pytest.fixture(autouse=True)
+def wide_console(monkeypatch):
+    """Force a wide console so Rich tables render all columns in tests."""
+    monkeypatch.setattr("expense_cli.cli.console", Console(highlight=False, width=200))
 
 
 @pytest.fixture
