@@ -14,8 +14,7 @@ import xlrd
 BANKS_DIR = Path.home() / ".expense_cli" / "banks"
 
 
-# TODO: return type of dict is not sufficient for type level strict
-def _hash_raw(raw: dict) -> str:
+def _hash_raw(raw: dict[str, str]) -> str:
     """Return a short hash of all raw bank row values for deduplication."""
     serialized = json.dumps(raw, sort_keys=True)
     return hashlib.sha256(serialized.encode()).hexdigest()[:16]
@@ -31,8 +30,7 @@ def load_bank_config(bank_name: str) -> dict:
     with path.open("rb") as f:
         return tomllib.load(f)
 
-# TODO: missing type for field_config and dict
-def _extract_field(field_config, raw: dict) -> str:
+def _extract_field(field_config: str | dict[str, str], raw: dict[str, str]) -> str:
     """Resolve a flexible mapping config to a string value.
 
     field_config: str (direct column name) or dict with optional keys:
