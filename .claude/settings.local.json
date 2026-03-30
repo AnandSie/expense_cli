@@ -38,7 +38,10 @@
       "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/pytest tests/test_cli.py::test_review_interactive_saves_iban_rule tests/test_cli.py::test_review_interactive_skips_iban_rule_when_declined tests/test_cli.py::test_review_interactive_saves_description_rule_when_no_iban tests/test_cli.py::test_review_interactive_skips_description_rule_when_cleared -v 2>&1)",
       "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/pytest tests/test_cli.py::test_review_interactive_saves_iban_rule tests/test_cli.py::test_review_interactive_skips_iban_rule_when_declined tests/test_cli.py::test_review_interactive_saves_description_rule_when_no_iban tests/test_cli.py::test_review_interactive_skips_description_rule_when_cleared -v --timeout=30 2>&1)",
       "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/pytest tests/test_cli.py::test_review_interactive_saves_iban_rule tests/test_cli.py::test_review_interactive_skips_iban_rule_when_declined tests/test_cli.py::test_review_interactive_saves_description_rule_accepting_default tests/test_cli.py::test_review_interactive_saves_custom_keyword -v 2>&1)",
-      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/pytest --tb=short)"
+      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/pytest --tb=short)",
+      "Bash(.venv/Scripts/pytest tests/test_cli.py -k \"keyword\" -v 2>&1)",
+      "Bash(.venv/Scripts/pytest tests/test_importer.py -v)",
+      "Bash(.venv/Scripts/pytest tests/test_toml_store.py tests/test_cli.py -v -k \"bank\")"
     ]
   }
 }

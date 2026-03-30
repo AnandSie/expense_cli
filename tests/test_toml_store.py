@@ -1,7 +1,7 @@
 from pathlib import Path
 import pytest
 
-from expense_cli.toml_store import read_toml, write_toml_array
+from expense_cli.toml_store import read_toml, write_toml_array, write_bank_config
 
 
 # ---------------------------------------------------------------------------
@@ -72,3 +72,47 @@ def test_write_toml_array_empty_entries_produces_only_header(tmp_path):
     write_toml_array(path, "rules", [], header="# header")
     result = read_toml(path)
     assert result.get("rules", []) == []
+
+
+# ---------------------------------------------------------------------------
+# write_bank_config
+# ---------------------------------------------------------------------------
+
+def test_write_bank_config_roundtrips_string_mapping(tmp_path):
+    path = tmp_path / "mybank.toml"
+    config = {
+        "bank": {"encoding": "utf-8", "date_format": "%Y-%m-%d", "decimal_separator": "."},
+        "mapping": {"date": "Date", "amount": "Amount", "iban": "IBAN"},
+    }
+    write_bank_config(path, config)
+    result = read_toml(path)
+    assert result["mapping"]["iban"] == "IBAN"
+    assert result["bank"]["date_format"] == "%Y-%m-%d"
+
+
+def test_write_bank_config_roundtrips_dict_mapping(tmp_path):
+    path = tmp_path / "mybank.toml"
+    config = {
+        "bank": {"encoding": "utf-8", "date_format": "%Y-%m-%d", "decimal_separator": "."},
+        "mapping": {"date": "Date", "amount": "Amount", "iban": {"extract_iban_from": "Description"}},
+    }
+    write_bank_config(path, config)
+    result = read_toml(path)
+    assert result["mapping"]["iban"] == {"extract_iban_from": "Description"}
+
+
+def test_write_bank_config_roundtrips_combined_dict_mapping(tmp_path):
+    path = tmp_path / "mybank.toml"
+    config = {
+        "bank": {"encoding": "utf-8", "date_format": "%Y-%m-%d", "decimal_separator": "."},
+        "mapping": {"date": "Date", "amount": "Amount", "iban": {"column": "IBAN", "extract_iban_from": "Desc"}},
+    }
+    write_bank_config(path, config)
+    result = read_toml(path)
+    assert result["mapping"]["iban"] == {"column": "IBAN", "extract_iban_from": "Desc"}
+
+
+def test_write_bank_config_creates_parent_dirs(tmp_path):
+    path = tmp_path / "banks" / "mybank.toml"
+    write_bank_config(path, {"mapping": {"date": "Date", "amount": "Amount"}})
+    assert path.exists()

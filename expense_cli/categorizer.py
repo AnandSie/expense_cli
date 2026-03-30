@@ -12,7 +12,7 @@ _HEADER = """\
 
 _FIELD_ORDER = ["counterparty", "category"]
 
-
+# TODO: expand the dict type
 def load_rules() -> list[dict]:
     return read_toml(CATEGORIES_PATH).get("rules", [])
 

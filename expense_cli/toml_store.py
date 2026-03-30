@@ -53,6 +53,30 @@ def write_toml_array(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def write_bank_config(path: Path, config: dict) -> None:
+    """Write a bank config dict as a TOML file with [bank] and [mapping] sections.
+
+    Mapping values that are dicts are serialized as TOML inline tables.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines: list[str] = []
+    if "bank" in config:
+        lines.append("[bank]")
+        for k, v in config["bank"].items():
+            lines.append(_fmt(k, v))
+        lines.append("")
+    if "mapping" in config:
+        lines.append("[mapping]")
+        for k, v in config["mapping"].items():
+            if isinstance(v, dict):
+                pairs = ", ".join(f'{dk} = "{dv}"' for dk, dv in v.items())
+                lines.append(f"{k} = {{ {pairs} }}")
+            else:
+                lines.append(_fmt(k, v))
+        lines.append("")
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _fmt(key: str, value: object) -> str:
     if isinstance(value, str):
         escaped = value.replace("\\", "\\\\").replace('"', '\\"')

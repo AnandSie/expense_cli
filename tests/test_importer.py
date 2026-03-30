@@ -95,6 +95,40 @@ def test_extract_field_dict_column_fallback_to_pattern(tmp_path):
     assert result == "NL91ABNA0417164300"
 
 
+# --- _extract_field: extract_iban_from ---
+
+def test_extract_iban_from_single_match():
+    raw = {"Desc": "Betaling aan NL91ABNA0417164300 voor huur"}
+    result = _extract_field({"extract_iban_from": "Desc"}, raw)
+    assert result == "NL91ABNA0417164300"
+
+
+def test_extract_iban_from_no_match():
+    raw = {"Desc": "geen iban in deze tekst"}
+    result = _extract_field({"extract_iban_from": "Desc"}, raw)
+    assert result == ""
+
+
+def test_extract_iban_from_multiple_matches_returns_empty():
+    raw = {"Desc": "Van NL91ABNA0417164300 naar NL02ABNA0123456789"}
+    result = _extract_field({"extract_iban_from": "Desc"}, raw)
+    assert result == ""
+
+
+def test_extract_iban_from_column_wins_when_present():
+    # column has a value — extract_iban_from should not be tried
+    raw = {"IBAN": "NL91ABNA0417164300", "Desc": "Van NL02ABNA0123456789 betaling"}
+    result = _extract_field({"column": "IBAN", "extract_iban_from": "Desc"}, raw)
+    assert result == "NL91ABNA0417164300"
+
+
+def test_extract_iban_from_used_when_column_empty():
+    # column is empty — fall back to extract_iban_from
+    raw = {"IBAN": "", "Desc": "Betaling NL91ABNA0417164300 ref"}
+    result = _extract_field({"column": "IBAN", "extract_iban_from": "Desc"}, raw)
+    assert result == "NL91ABNA0417164300"
+
+
 # --- read_bank_file (CSV) ---
 
 SIMPLE_CONFIG = {

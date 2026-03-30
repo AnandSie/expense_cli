@@ -166,6 +166,16 @@ id, date, weekday, time, amount, description, iban, counterparty, category, sour
 Each field in `[mapping]` can be:
 - A string: direct column name
 - A dict with `column` (read directly) and/or `from_column` + `pattern` (regex fallback; first capture group wins, else full match)
+- A dict with `extract_iban_from` (scans the given column for a valid IBAN; used only if exactly one match is found — empty if zero or multiple)
+
+Examples:
+```toml
+iban = "IBANColumn"                                           # direct column
+iban = { column = "IBANColumn" }                             # same, dict form
+iban = { from_column = "Description", pattern = "..." }      # custom regex
+iban = { extract_iban_from = "Description" }                 # auto-detect IBAN from text
+iban = { column = "IBAN", extract_iban_from = "Description" } # column first, auto-detect as fallback
+```
 
 The `config bank <name>` command prints and validates a bank TOML. `config counterparties` and `config categories` do the same for their respective files. Validation catches missing required fields, unknown keys, and deprecated field names.
 

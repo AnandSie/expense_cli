@@ -52,6 +52,12 @@ def _extract_field(field_config: str | dict[str, str], raw: dict[str, str]) -> s
         if m:
             val = (m.group(1) if m.lastindex else m.group(0)).strip()
 
+    if not val and "extract_iban_from" in field_config:
+        source = raw.get(field_config["extract_iban_from"], "")
+        matches = re.findall(r'(?<![A-Z0-9])[A-Z]{2}[0-9]{2}[A-Z0-9]{4,30}(?![A-Z0-9])', source)
+        if len(matches) == 1:
+            val = matches[0]
+
     return val
 
 

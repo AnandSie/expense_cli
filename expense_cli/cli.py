@@ -110,9 +110,10 @@ def _validate_field_config(value, field_name: str) -> list[str]:
         has_column = "column" in value
         has_from_column = "from_column" in value
         has_pattern = "pattern" in value
-        if not has_column and not (has_from_column and has_pattern):
+        has_extract_iban_from = "extract_iban_from" in value
+        if not has_column and not (has_from_column and has_pattern) and not has_extract_iban_from:
             errors.append(
-                f"mapping.{field_name}: dict config must have 'column' or both 'from_column' and 'pattern'"
+                f"mapping.{field_name}: dict config must have 'column', both 'from_column'+'pattern', or 'extract_iban_from'"
             )
     else:
         errors.append(f"mapping.{field_name}: must be a string or table, got {type(value).__name__}")
@@ -193,7 +194,12 @@ def config_bank(
     bank: str = typer.Argument(..., help="Bank name, or 'new <name>' to create a template"),
     sub_name: Optional[str] = typer.Argument(None, hidden=True),
 ) -> None:
-    """Print and validate a bank config, or create a new template with 'bank new <name>'."""
+    """Print and validate a bank config, or create a new template.
+
+    Examples:\n
+      expense config bank mybank\n
+      expense config bank new mybank
+    """
     if bank == "new":
         if sub_name is None:
             typer.echo("Usage: expense config bank new <name>", err=True)
@@ -236,6 +242,70 @@ def _config_bank_new_impl(bank: str) -> None:
     path.write_text(_BANK_TEMPLATE, encoding="utf-8")
     typer.echo(f"Created {path}")
     typer.echo("Edit it to match your bank's column names, then run: expense config bank " + bank)
+
+
+@config_app.command(name="bank-set")
+def config_bank_set(
+    bank: str = typer.Argument(..., help="Bank name to configure"),
+    field: str = typer.Option(..., "--field", "-f", help="Mapping field to set (e.g. iban, date, amount)"),
+    column: Optional[str] = typer.Option(None, "--column", help="Column name to read directly"),
+    from_column: Optional[str] = typer.Option(None, "--from-column", help="Column to apply a regex pattern to"),
+    pattern: Optional[str] = typer.Option(None, "--pattern", help="Regex pattern; first capture group used, else full match"),
+    extract_iban_from: Optional[str] = typer.Option(None, "--extract-iban-from", help="Column to auto-detect a single IBAN from"),
+) -> None:
+    """Set a mapping field in a bank config.
+
+    Examples:\n
+      expense config bank-set mybank --field iban --column IBAN\n
+      expense config bank-set mybank --field iban --extract-iban-from Description\n
+      expense config bank-set mybank --field iban --column IBAN --extract-iban-from Description\n
+      expense config bank-set mybank --field iban --from-column Description --pattern "[A-Z]{2}[0-9]{2}[A-Z0-9]+"
+    """
+    from expense_cli.toml_store import read_toml, write_bank_config
+
+    path = BANKS_DIR / f"{bank}.toml"
+    if not path.exists():
+        typer.echo(f"No bank config found at {path}", err=True)
+        typer.echo(f"Run: expense config bank new {bank}", err=True)
+        raise typer.Exit(1)
+
+    if not column and not extract_iban_from and not (from_column and pattern):
+        typer.echo(
+            "Provide at least one of: --column, --extract-iban-from, or --from-column + --pattern",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    if from_column and not pattern:
+        typer.echo("--from-column requires --pattern", err=True)
+        raise typer.Exit(1)
+
+    if pattern and not from_column:
+        typer.echo("--pattern requires --from-column", err=True)
+        raise typer.Exit(1)
+
+    config = read_toml(path)
+    config.setdefault("mapping", {})
+
+    # Build the field value: string if only --column, dict otherwise
+    parts: dict[str, str] = {}
+    if column:
+        parts["column"] = column
+    if from_column:
+        parts["from_column"] = from_column
+    if pattern:
+        parts["pattern"] = pattern
+    if extract_iban_from:
+        parts["extract_iban_from"] = extract_iban_from
+
+    if list(parts.keys()) == ["column"]:
+        config["mapping"][field] = column
+    else:
+        config["mapping"][field] = parts
+
+    write_bank_config(path, config)
+    typer.echo(f"Updated {bank}: mapping.{field}")
+    typer.echo(f"Run: expense config bank {bank}  to verify")
 
 
 @counterparties_app.callback(invoke_without_command=True)
@@ -285,7 +355,11 @@ def config_counterparties_add(
 
     If an entry for NAME already exists, the matcher is added to it.
     Both --iban and --contains can be set on the same counterparty by running add twice.
-    To change an existing value use: expense config counterparties edit
+    To change an existing value use: expense config counterparties edit\n
+
+    Examples:\n
+      expense config counterparties add --name "albert heijn" --contains "albert heijn"\n
+      expense config counterparties add --name "albert heijn" --iban NL91ABNA0417164300
     """
     from expense_cli.identifier import save_counterparty_rule, matcher_exists
 
@@ -315,7 +389,12 @@ def config_counterparties_edit(
     contains: Optional[str] = typer.Option(None, "--contains", help="Replace the description_contains matcher"),
     iban: Optional[str] = typer.Option(None, "--iban", help="Replace the iban matcher"),
 ) -> None:
-    """Change fields on an existing counterparty entry."""
+    """Change fields on an existing counterparty entry.
+
+    Examples:\n
+      expense config counterparties edit --name "albert heijn" --contains "ah.nl"\n
+      expense config counterparties edit --name "albert heijn" --new-name "ah"
+    """
     from expense_cli.identifier import edit_counterparty_rule
 
     if not any([new_name, contains, iban]):
@@ -379,7 +458,11 @@ def config_categories_add(
 ) -> None:
     """Add a category rule (creates it if it doesn't exist yet).
 
-    To change an existing rule use: expense config categories edit
+    To change an existing rule use: expense config categories edit\n
+
+    Examples:\n
+      expense config categories add --counterparty "albert heijn" --category groceries\n
+      expense config categories add -c spotify -k subscriptions
     """
     from expense_cli.categorizer import save_category_rule, category_rule_exists
 
@@ -400,7 +483,12 @@ def config_categories_edit(
     new_counterparty: Optional[str] = typer.Option(None, "--new-counterparty", help="Rename the counterparty key"),
     category: Optional[str] = typer.Option(None, "--category", "-k", help="Replace the category"),
 ) -> None:
-    """Change an existing category rule."""
+    """Change an existing category rule.
+
+    Examples:\n
+      expense config categories edit --counterparty "albert heijn" --category food\n
+      expense config categories edit -c spotify --new-counterparty "spotify premium"
+    """
     from expense_cli.categorizer import edit_category_rule
 
     if not any([new_counterparty, category]):
@@ -429,7 +517,13 @@ def add(
     iban: str = typer.Option("", "--iban", help="Counterparty IBAN"),
     counterparty: str = typer.Option("", "--counterparty", "-n", help="Counterparty name"),
 ) -> None:
-    """Add a new expense."""
+    """Add a new expense.
+
+    Examples:\n
+      expense add 12.50 "Coffee"\n
+      expense add -42.00 "Supermarket" --category groceries --counterparty "albert heijn"\n
+      expense add 9.99 "Spotify" --date 2026-03-01 --iban NL91ABNA0417164300
+    """
     if expense_date is None:
         expense_date = date.today().isoformat()
 
@@ -464,7 +558,16 @@ def list_expenses(
     max_amount: Optional[float] = typer.Option(None, "--max", help="Hide transactions with abs(amount) above this value"),
     direction: Optional[str] = typer.Option(None, "--direction", help="Filter by direction: 'in' or 'out'"),
 ) -> None:
-    """List expenses, optionally filtered by category, date range, amount, or direction."""
+    """List expenses, optionally filtered by category, date range, amount, or direction.
+
+    Examples:\n
+      expense list\n
+      expense list --category groceries\n
+      expense list --month 2026-03\n
+      expense list --from 2026-01-01 --to 2026-03-31\n
+      expense list --unreviewed --wide\n
+      expense list --direction out --min 50
+    """
     if month and (from_date or to_date):
         typer.echo("--month cannot be combined with --from or --to.", err=True)
         raise typer.Exit(1)
@@ -534,7 +637,13 @@ def import_expenses(
     bank: str = typer.Option(..., "--bank", "-b", help="Bank name matching a config in ~/.expense_cli/banks/<name>.toml"),
     force: bool = typer.Option(False, "--force", help="Import all rows, skipping duplicate detection"),
 ) -> None:
-    """Import expenses from a bank CSV file."""
+    """Import expenses from a bank statement file (CSV, TAB, or XLS).
+
+    Examples:\n
+      expense import statement.csv --bank ing\n
+      expense import january.xls --bank rabobank\n
+      expense import export.csv --bank mybank --force
+    """
     from expense_cli.importer import load_bank_config, read_bank_file
     from expense_cli.identifier import load_counterparties, identify
     from expense_cli.categorizer import load_rules, categorize
@@ -680,35 +789,50 @@ else:
 
 
 _HINT = "  \033[2mtype to filter  ·  ↑↓ more options  ·  1-9 pick  ·  ^S skip tx  ·  ^Q quit\033[0m"
-_EDIT_HINT = "  \033[2m←→ move  ·  backspace  ·  ^U clear  ·  Enter save  ·  empty skip\033[0m"
+_EDIT_HINT = "  \033[2m←→ move  ·  backspace  ·  ^U clear  ·  Enter save  ·  empty skip  ·  ^S skip tx  ·  ^Q quit\033[0m"
 
 
-def _input_prefilled(prompt_text: str, default: str) -> str:
+def _input_prefilled(prompt_text: str, default: str) -> str | object | None:
     """Show prompt with default text pre-filled and fully editable.
 
-    Supports cursor movement (←→), backspace (delete before cursor),
-    Ctrl+U (clear all), Enter (submit), empty submit = skip.
+    Supports cursor movement (←→), backspace, Ctrl+U (clear), Ctrl+S (skip tx),
+    Ctrl+Q (quit), Enter (submit), empty submit = skip field.
 
     Falls back to typer.prompt when stdin is not a TTY (e.g. in tests).
+
+    Returns:
+        str   — edited value (empty string = skip saving)
+        _SKIP — skip this transaction
+        None  — quit the review session
     """
     if not _sys.stdin.isatty():
         return typer.prompt(prompt_text, default=default)
 
+    import shutil as _shutil_input
+    _term_width = _shutil_input.get_terminal_size().columns
     prefix = f"  \033[1m{prompt_text}:\033[0m "
-    buffer: list[str] = list(default)
+    # Cap content to one terminal line so \r always lands at the start of the prompt line.
+    # Long descriptions (the typical default) would otherwise wrap and break in-place redraw.
+    _max_content = max(10, _term_width - len(prefix) - 1)
+    buffer: list[str] = list(default[:_max_content])
     cursor = len(buffer)  # start at end of pre-filled text
+    _prev_draw_len = [len(prefix) + len(buffer)]  # track drawn length to overwrite stale chars
 
     def redraw() -> None:
-        text = "".join(buffer)
-        after = len(buffer) - cursor
-        _sys.stdout.write(f"\r\033[K{prefix}{text}")
-        if after > 0:
-            _sys.stdout.write(f"\033[{after}D")
+        # Hint is printed once above and never touched again — redraw only operates on the
+        # current (prompt) line. No cursor-up sequences needed.
+        full = prefix + "".join(buffer)
+        # Pad with spaces to overwrite any chars left over from a longer previous draw
+        padding = max(0, _prev_draw_len[0] - len(full))
+        _prev_draw_len[0] = len(full)
+        after = len(buffer) - cursor  # chars to the right of cursor
+        _sys.stdout.write(f"\r{full}{' ' * padding}")
+        if after + padding > 0:
+            _sys.stdout.write(f"\033[{after + padding}D")  # move cursor to correct position
         _sys.stdout.flush()
 
-    # Initial render: prompt line, hint line below, cursor back on prompt line
-    _sys.stdout.write(f"\n{prefix}{''.join(buffer)}\n{_EDIT_HINT}")
-    _sys.stdout.write(f"\033[1A\r{prefix}{''.join(buffer)}")
+    # Print hint once above, then the prompt line — cursor stays on the prompt line always.
+    _sys.stdout.write(f"\n{_EDIT_HINT}\n{prefix}{''.join(buffer)}")
     _sys.stdout.flush()
 
     while True:
@@ -716,8 +840,18 @@ def _input_prefilled(prompt_text: str, default: str) -> str:
         if ch is None:
             continue
 
+        if ch == "\x11":  # Ctrl+Q — quit review session
+            _sys.stdout.write("\n")
+            _sys.stdout.flush()
+            return None
+
+        if ch == "\x13":  # Ctrl+S — skip transaction
+            _sys.stdout.write("\n")
+            _sys.stdout.flush()
+            return _SKIP
+
         if ch in ("\r", "\n"):  # Enter — submit
-            _sys.stdout.write("\n\r\033[K\033[1A\n")  # clear hint line, advance past prompt
+            _sys.stdout.write("\n")
             _sys.stdout.flush()
             return "".join(buffer)
 
@@ -735,19 +869,18 @@ def _input_prefilled(prompt_text: str, default: str) -> str:
         elif ch == "LEFT":
             if cursor > 0:
                 cursor -= 1
-                _sys.stdout.write("\033[D")
-                _sys.stdout.flush()
+                redraw()
 
         elif ch == "RIGHT":
             if cursor < len(buffer):
                 cursor += 1
-                _sys.stdout.write("\033[C")
-                _sys.stdout.flush()
+                redraw()
 
         elif len(ch) == 1 and ch.isprintable():
-            buffer.insert(cursor, ch)
-            cursor += 1
-            redraw()
+            if len(buffer) < _max_content:
+                buffer.insert(cursor, ch)
+                cursor += 1
+                redraw()
 
 
 def _pick(prompt_text: str, options: list[str], header: str = "") -> str | object | None:
@@ -901,7 +1034,14 @@ def review(
     month: Optional[int] = typer.Option(None, "--month", "-m", min=1, max=12, help="Filter by month (1-12)"),
     year: Optional[int] = typer.Option(None, "--year", "-y", help="Filter by year (e.g. 2024)"),
 ) -> None:
-    """Show expenses that need manual attention (missing counterparty or category)."""
+    """Show expenses that need manual attention (missing counterparty or category).
+
+    Examples:\n
+      expense review\n
+      expense review --interactive\n
+      expense review --unidentified\n
+      expense review --uncategorized --month 3
+    """
     from expense_cli.identifier import load_counterparties, rule_exists, save_counterparty_rule
     from expense_cli.categorizer import load_rules, categorize, category_rule_exists, save_category_rule
 
@@ -1052,7 +1192,9 @@ def review(
                         console.print(f"  [green]✓ rule saved (iban)[/green]")
                 else:
                     keyword = _input_prefilled(f"Keyword for '{cp}'", desc)
-                    if keyword.strip():
+                    if keyword is None:
+                        break  # quit review session
+                    if keyword is not _SKIP and keyword.strip():
                         save_counterparty_rule(cp, "description_contains", keyword.strip().lower())
                         console.print(f"  [green]✓ rule saved (description_contains)[/green]")
 
@@ -1078,7 +1220,13 @@ def edit(
     counterparty: Optional[str] = typer.Option(None, "--counterparty", "-n", help="Set counterparty name"),
     category: Optional[str] = typer.Option(None, "--category", "-c", help="Set category"),
 ) -> None:
-    """Update identity or category on an existing expense."""
+    """Update identity or category on an existing expense.
+
+    Examples:\n
+      expense edit 42 --counterparty "albert heijn"\n
+      expense edit 42 --category groceries\n
+      expense edit 42 --iban NL91ABNA0417164300 --counterparty "albert heijn"
+    """
     fields = {}
     if iban is not None:
         fields["iban"] = iban
@@ -1111,7 +1259,13 @@ def delete(
     all_: bool = typer.Option(False, "--all", help="Delete all expenses (requires confirmation)"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt for single delete"),
 ) -> None:
-    """Delete a single expense by ID, or all expenses with --all."""
+    """Delete a single expense by ID, or all expenses with --all.
+
+    Examples:\n
+      expense delete 42\n
+      expense delete 42 --yes\n
+      expense delete --all
+    """
     import expense_cli.storage as _storage
 
     if all_ and expense_id is not None:
@@ -1168,7 +1322,14 @@ def summary(
     month: Optional[str] = typer.Option(None, "--month", help="Filter by month: YYYY-MM or 1-12"),
     year: Optional[int] = typer.Option(None, "--year", help="Year to use with --month number (default: current year)"),
 ) -> None:
-    """Summarize spending grouped by category or counterparty."""
+    """Summarize spending grouped by category or counterparty.
+
+    Examples:\n
+      expense summary\n
+      expense summary --by counterparty\n
+      expense summary --month 2026-03\n
+      expense summary --by category --from 2026-01-01 --to 2026-03-31
+    """
     if month and (from_date or to_date):
         typer.echo("--month cannot be combined with --from or --to.", err=True)
         raise typer.Exit(1)

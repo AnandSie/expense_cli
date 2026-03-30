@@ -177,6 +177,70 @@ def test_config_bank_missing_suggests_new(tmp_storage):
     assert "new" in result.output
 
 
+# --- bank-set ---
+
+def _make_bank(tmp_storage) -> None:
+    runner.invoke(app, ["config", "bank", "new", "mybank"])
+
+
+def test_config_bank_set_column(tmp_storage):
+    _make_bank(tmp_storage)
+    result = runner.invoke(app, ["config", "bank-set", "mybank", "--field", "iban", "--column", "IBAN"])
+    assert result.exit_code == 0
+    content = (tmp_storage / "banks" / "mybank.toml").read_text(encoding="utf-8")
+    assert 'iban = "IBAN"' in content
+
+
+def test_config_bank_set_extract_iban_from(tmp_storage):
+    _make_bank(tmp_storage)
+    result = runner.invoke(app, ["config", "bank-set", "mybank", "--field", "iban", "--extract-iban-from", "Description"])
+    assert result.exit_code == 0
+    content = (tmp_storage / "banks" / "mybank.toml").read_text(encoding="utf-8")
+    assert "extract_iban_from" in content
+    assert "Description" in content
+
+
+def test_config_bank_set_column_and_extract_iban_from(tmp_storage):
+    _make_bank(tmp_storage)
+    result = runner.invoke(app, [
+        "config", "bank-set", "mybank",
+        "--field", "iban", "--column", "IBAN", "--extract-iban-from", "Description",
+    ])
+    assert result.exit_code == 0
+    content = (tmp_storage / "banks" / "mybank.toml").read_text(encoding="utf-8")
+    assert "column" in content
+    assert "extract_iban_from" in content
+
+
+def test_config_bank_set_from_column_and_pattern(tmp_storage):
+    _make_bank(tmp_storage)
+    result = runner.invoke(app, [
+        "config", "bank-set", "mybank",
+        "--field", "iban", "--from-column", "Description", "--pattern", r"[A-Z]{2}\d{2}[A-Z0-9]+",
+    ])
+    assert result.exit_code == 0
+    content = (tmp_storage / "banks" / "mybank.toml").read_text(encoding="utf-8")
+    assert "from_column" in content
+    assert "pattern" in content
+
+
+def test_config_bank_set_missing_bank(tmp_storage):
+    result = runner.invoke(app, ["config", "bank-set", "nobank", "--field", "iban", "--column", "IBAN"])
+    assert result.exit_code != 0
+
+
+def test_config_bank_set_no_options(tmp_storage):
+    _make_bank(tmp_storage)
+    result = runner.invoke(app, ["config", "bank-set", "mybank", "--field", "iban"])
+    assert result.exit_code != 0
+
+
+def test_config_bank_set_pattern_without_from_column(tmp_storage):
+    _make_bank(tmp_storage)
+    result = runner.invoke(app, ["config", "bank-set", "mybank", "--field", "iban", "--pattern", "foo"])
+    assert result.exit_code != 0
+
+
 # --- CLI: add + list ---
 
 def test_add_and_list(tmp_storage):
@@ -469,6 +533,31 @@ def test_review_interactive_saves_custom_keyword(tmp_storage, monkeypatch):
     from expense_cli.identifier import load_counterparties
     rules = load_counterparties()
     assert any(r.get("description_contains") == "spotify" for r in rules)
+
+
+def test_review_interactive_keyword_skip_does_not_save_rule(tmp_storage, monkeypatch):
+    """^S during keyword prompt → no counterparty rule saved, review completes normally."""
+    from expense_cli.cli import _SKIP
+    runner.invoke(app, ["add", "10.00", "SPOTIFY PREMIUM MONTHLY", "--category", "subscriptions"])
+    monkeypatch.setattr("expense_cli.cli._pick", lambda *a, **kw: "spotify")
+    monkeypatch.setattr("expense_cli.cli._input_prefilled", lambda *a, **kw: _SKIP)
+    runner.invoke(app, ["review", "-i"])
+    from expense_cli.identifier import load_counterparties
+    rules = load_counterparties()
+    assert not any(r.get("description_contains") for r in rules)
+
+
+def test_review_interactive_keyword_quit_stops_review(tmp_storage, monkeypatch):
+    """^Q during keyword prompt → review session quits; subsequent expenses are not processed."""
+    runner.invoke(app, ["add", "10.00", "EXPENSE ONE", "--category", "food"])
+    runner.invoke(app, ["add", "20.00", "EXPENSE TWO", "--category", "food"])
+    monkeypatch.setattr("expense_cli.cli._pick", lambda *a, **kw: "some party")
+    monkeypatch.setattr("expense_cli.cli._input_prefilled", lambda *a, **kw: None)
+    runner.invoke(app, ["review", "-i"])
+    from expense_cli.storage import read_expenses
+    expenses = read_expenses()
+    without_counterparty = [e for e in expenses if not e.get("counterparty")]
+    assert len(without_counterparty) == 1  # second expense was not reviewed
 
 
 # --- CLI: import ---
