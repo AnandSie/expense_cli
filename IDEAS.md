@@ -27,8 +27,8 @@ The actionable view: sort counterparties by **count descending** and check wheth
 ### Ideas, roughly by value vs effort
 
 **Easy, high value**
-- `expense summary` — total + % + count per category, sorted by amount. One table, immediately useful.
-- `expense summary --by counterparty` — same but per vendor; the count column is what makes patterns visible.
+- `expense insights` — total + % + count per category, sorted by amount. One table, immediately useful.
+- `expense insights --by counterparty` — same but per vendor; the count column is what makes patterns visible.
 - Optional `--from`/`--to` filters on both, to scope to a month or quarter.
 
 **Medium effort, high value**

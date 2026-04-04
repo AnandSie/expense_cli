@@ -69,7 +69,7 @@ Tests live in `tests/` and use `tmp_path` + `monkeypatch` to redirect `~/.expens
 expense add <amount> <description> [--category CAT] [--date DATE] [--time TIME] [--iban IBAN] [--counterparty NAME]
 expense list [--category CAT] [--from DATE] [--to DATE] [--unreviewed] [--reviewed]
 expense import <file> --bank <bank_name> [--force]
-expense review [--unidentified] [--uncategorized] [--interactive|-i]
+expense review [--unidentified] [--uncategorized]
 expense edit <id> [--iban IBAN] [--counterparty NAME] [--category CAT]
 expense delete <id> [--yes]
 expense delete --all
@@ -108,12 +108,12 @@ All user data and config lives under `~/.expense_cli/`:
 
 A transaction is **reviewed** when it has both `counterparty` and `category` set (non-empty). IBAN is a helper for identification only — not part of the reviewed definition.
 
-- `expense review` — show all unreviewed (missing counterparty OR category)
+- `expense review` — interactively step through all unreviewed (missing counterparty OR category)
 - `expense review --unidentified` — only missing counterparty
 - `expense review --uncategorized` — only missing category
 - `expense list --unreviewed` / `--reviewed` — filter the full list
 
-## Interactive Review (`review -i`)
+## Interactive Review (`review`)
 
 Steps through unreviewed expenses one at a time. For each expense:
 1. Shows date, amount, IBAN, and description (description last — it can be long)

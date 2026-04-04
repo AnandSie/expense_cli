@@ -5,7 +5,11 @@ from expense_cli.identifier import (
     matcher_exists,
     save_counterparty_rule,
     edit_counterparty_rule,
+    delete_counterparty_rule,
+    clear_counterparty_rules,
     load_counterparties,
+    remove_category,
+    clear_categories,
 )
 
 # ---------------------------------------------------------------------------
@@ -199,3 +203,171 @@ def test_edit_does_not_affect_other_entries(tmp_storage):
     entries = load_counterparties()
     spotify = next(e for e in entries if e["name"] == "spotify")
     assert spotify["description_contains"] == "spotify"
+
+
+# ---------------------------------------------------------------------------
+# delete_counterparty_rule
+# ---------------------------------------------------------------------------
+
+def test_delete_returns_false_if_not_found(tmp_storage):
+    assert delete_counterparty_rule("nobody") is False
+
+
+def test_delete_removes_entry(tmp_storage):
+    save_counterparty_rule("netflix", "description_contains", "netflix")
+    assert delete_counterparty_rule("netflix") is True
+    assert load_counterparties() == []
+
+
+def test_delete_case_insensitive(tmp_storage):
+    save_counterparty_rule("netflix", "description_contains", "netflix")
+    assert delete_counterparty_rule("Netflix") is True
+    assert load_counterparties() == []
+
+
+def test_delete_leaves_other_entries_intact(tmp_storage):
+    save_counterparty_rule("netflix", "description_contains", "netflix")
+    save_counterparty_rule("spotify", "description_contains", "spotify")
+    delete_counterparty_rule("netflix")
+    entries = load_counterparties()
+    assert len(entries) == 1
+    assert entries[0]["name"] == "spotify"
+
+
+# ---------------------------------------------------------------------------
+# clear_counterparty_rules
+# ---------------------------------------------------------------------------
+
+def test_clear_returns_zero_when_empty(tmp_storage):
+    assert clear_counterparty_rules() == 0
+
+
+def test_clear_removes_all_entries(tmp_storage):
+    save_counterparty_rule("netflix", "description_contains", "netflix")
+    save_counterparty_rule("spotify", "description_contains", "spotify")
+    count = clear_counterparty_rules()
+    assert count == 2
+    assert load_counterparties() == []
+
+
+# ---------------------------------------------------------------------------
+# category field support in save / edit
+# ---------------------------------------------------------------------------
+
+def test_save_with_category_creates_entry(tmp_storage):
+    save_counterparty_rule("mom", category="transfers")
+    entries = load_counterparties()
+    assert len(entries) == 1
+    assert entries[0]["name"] == "mom"
+    assert entries[0]["category"] == "transfers"
+    assert "iban" not in entries[0]
+    assert "description_contains" not in entries[0]
+
+
+def test_save_category_on_existing_entry(tmp_storage):
+    save_counterparty_rule("netflix", "description_contains", "netflix")
+    save_counterparty_rule("netflix", category="subscriptions")
+    entries = load_counterparties()
+    assert len(entries) == 1
+    assert entries[0]["category"] == "subscriptions"
+    assert entries[0]["description_contains"] == "netflix"
+
+
+def test_save_matcher_and_category_together(tmp_storage):
+    save_counterparty_rule("ah", "iban", "NL01ABCD", category="groceries")
+    entries = load_counterparties()
+    assert entries[0]["iban"] == "NL01ABCD"
+    assert entries[0]["category"] == "groceries"
+
+
+def test_edit_sets_category(tmp_storage):
+    save_counterparty_rule("netflix", "description_contains", "netflix")
+    edit_counterparty_rule("netflix", category="subscriptions")
+    assert load_counterparties()[0]["category"] == "subscriptions"
+
+
+# ---------------------------------------------------------------------------
+# remove_category / clear_categories
+# ---------------------------------------------------------------------------
+
+def test_remove_category_from_name_only_entry_deletes_entry(tmp_storage):
+    save_counterparty_rule("mom", category="transfers")
+    assert remove_category("mom") is True
+    assert load_counterparties() == []
+
+
+def test_remove_category_from_entry_with_matcher_keeps_entry(tmp_storage):
+    save_counterparty_rule("netflix", "description_contains", "netflix", category="subscriptions")
+    assert remove_category("netflix") is True
+    entries = load_counterparties()
+    assert len(entries) == 1
+    assert "category" not in entries[0]
+    assert entries[0]["description_contains"] == "netflix"
+
+
+def test_remove_category_returns_false_if_no_category(tmp_storage):
+    save_counterparty_rule("netflix", "description_contains", "netflix")
+    assert remove_category("netflix") is False
+
+
+def test_remove_category_returns_false_if_not_found(tmp_storage):
+    assert remove_category("nobody") is False
+
+
+def test_clear_categories_returns_count(tmp_storage):
+    save_counterparty_rule("mom", category="transfers")
+    save_counterparty_rule("netflix", "description_contains", "netflix", category="subscriptions")
+    count = clear_categories()
+    assert count == 2
+
+
+def test_clear_categories_removes_name_only_entries(tmp_storage):
+    save_counterparty_rule("mom", category="transfers")
+    clear_categories()
+    assert load_counterparties() == []
+
+
+def test_clear_categories_keeps_entries_with_matchers(tmp_storage):
+    save_counterparty_rule("netflix", "description_contains", "netflix", category="subscriptions")
+    clear_categories()
+    entries = load_counterparties()
+    assert len(entries) == 1
+    assert "category" not in entries[0]
+
+
+# ---------------------------------------------------------------------------
+# _migrate_categories
+# ---------------------------------------------------------------------------
+
+def test_migrate_merges_categories_into_counterparties(tmp_storage):
+    """Migration reads legacy categories.toml and merges into counterparties.toml."""
+    (tmp_storage / "counterparties.toml").write_text(
+        '[[counterparty]]\nname = "albert heijn"\niban = "NL01ABCD"\n',
+        encoding="utf-8",
+    )
+    (tmp_storage / "categories.toml").write_text(
+        '[[rules]]\ncounterparty = "albert heijn"\ncategory = "groceries"\n',
+        encoding="utf-8",
+    )
+    entries = load_counterparties()  # triggers migration
+    assert not (tmp_storage / "categories.toml").exists()
+    assert (tmp_storage / "categories.toml.bak").exists()
+    ah = next(e for e in entries if e["name"] == "albert heijn")
+    assert ah["category"] == "groceries"
+    assert ah["iban"] == "NL01ABCD"
+
+
+def test_migrate_creates_name_only_entry_if_no_counterparty_match(tmp_storage):
+    """Category rule with no matching counterparty entry → creates a name-only entry."""
+    (tmp_storage / "categories.toml").write_text(
+        '[[rules]]\ncounterparty = "mom"\ncategory = "transfers"\n',
+        encoding="utf-8",
+    )
+    entries = load_counterparties()
+    assert any(e["name"] == "mom" and e["category"] == "transfers" for e in entries)
+
+
+def test_migrate_skips_if_no_legacy_file(tmp_storage):
+    save_counterparty_rule("netflix", "description_contains", "netflix")
+    entries = load_counterparties()
+    assert len(entries) == 1  # nothing changed

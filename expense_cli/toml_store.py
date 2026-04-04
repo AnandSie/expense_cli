@@ -24,6 +24,7 @@ def write_toml_array(
     entries: list[dict],
     header: str = "",
     field_order: list[str] | None = None,
+    sort_key: str | None = None,
 ) -> None:
     """Rewrite *path* as a TOML file containing a single array-of-tables section.
 
@@ -33,7 +34,10 @@ def write_toml_array(
         entries:     List of dicts, each representing one table entry.
         header:      Optional comment block written at the top of the file.
         field_order: Keys to write first (in order); remaining keys follow.
+        sort_key:    If given, sort entries by this field (case-insensitive) before writing.
     """
+    if sort_key is not None:
+        entries = sorted(entries, key=lambda e: e.get(sort_key, "").lower())
     path.parent.mkdir(parents=True, exist_ok=True)
     lines: list[str] = []
     if header:

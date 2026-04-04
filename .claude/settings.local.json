@@ -41,7 +41,21 @@
       "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/pytest --tb=short)",
       "Bash(.venv/Scripts/pytest tests/test_cli.py -k \"keyword\" -v 2>&1)",
       "Bash(.venv/Scripts/pytest tests/test_importer.py -v)",
-      "Bash(.venv/Scripts/pytest tests/test_toml_store.py tests/test_cli.py -v -k \"bank\")"
+      "Bash(.venv/Scripts/pytest tests/test_toml_store.py tests/test_cli.py -v -k \"bank\")",
+      "Bash(.venv/Scripts/pytest tests/test_identifier.py tests/test_cli.py -v -k \"delete or remove\" 2>&1)",
+      "Bash(.venv/Scripts/pytest tests/test_categorizer.py tests/test_cli.py -v -k \"delete or remove\" 2>&1)",
+      "Bash(.venv/Scripts/pytest tests/test_categorizer.py tests/test_identifier.py tests/test_cli.py -v -k \"remove or clear\" 2>&1)",
+      "Bash(.venv/Scripts/pytest tests/test_cli.py -v -k \"review\" 2>&1)",
+      "Bash(.venv/Scripts/pytest tests/test_cli.py::test_review_interactive_non_iban_value_skips_to_description -v 2>&1)",
+      "Bash(.venv/Scripts/pytest:*)",
+      "Bash(sed:*)",
+      "Bash(cmd /c \".venv\\\\Scripts\\\\pytest --tb=short 2>&1\")",
+      "Bash(/c/Users/Anand/Desktop/expense_cli/.venv/Scripts/pytest.exe --tb=short)",
+      "Bash(python -m pytest --tb=short -q)",
+      "Bash(C:/Users/Anand/Desktop/expense_cli/.venv/Scripts/python.exe -m pytest --tb=short -q)",
+      "Bash(C:/Users/Anand/Desktop/expense_cli/.venv/Scripts/python.exe:*)",
+      "Bash(.venv/Scripts/python:*)",
+      "Bash(ls:*)"
     ]
   }
 }

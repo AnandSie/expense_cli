@@ -74,6 +74,30 @@ def test_write_toml_array_empty_entries_produces_only_header(tmp_path):
     assert result.get("rules", []) == []
 
 
+def test_write_toml_array_sort_key_sorts_entries(tmp_path):
+    path = tmp_path / "out.toml"
+    entries = [{"name": "zebra"}, {"name": "alpha"}, {"name": "mango"}]
+    write_toml_array(path, "item", entries, sort_key="name")
+    result = read_toml(path)
+    assert [e["name"] for e in result["item"]] == ["alpha", "mango", "zebra"]
+
+
+def test_write_toml_array_sort_key_is_case_insensitive(tmp_path):
+    path = tmp_path / "out.toml"
+    entries = [{"name": "Zebra"}, {"name": "alpha"}, {"name": "Mango"}]
+    write_toml_array(path, "item", entries, sort_key="name")
+    result = read_toml(path)
+    assert [e["name"] for e in result["item"]] == ["alpha", "Mango", "Zebra"]
+
+
+def test_write_toml_array_no_sort_key_preserves_order(tmp_path):
+    path = tmp_path / "out.toml"
+    entries = [{"name": "zebra"}, {"name": "alpha"}]
+    write_toml_array(path, "item", entries)
+    result = read_toml(path)
+    assert [e["name"] for e in result["item"]] == ["zebra", "alpha"]
+
+
 # ---------------------------------------------------------------------------
 # write_bank_config
 # ---------------------------------------------------------------------------
