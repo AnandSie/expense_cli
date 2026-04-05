@@ -299,10 +299,10 @@ def _config_bank_new_impl(bank: str) -> None:
 def config_bank_set(
     bank: str = typer.Argument(..., help="Bank name to configure"),
     field: str = typer.Option(..., "--field", "-f", help="Mapping field to set (e.g. iban, date, amount)"),
-    column: Optional[str] = typer.Option(None, "--column", help="Column name to read directly"),
-    from_column: Optional[str] = typer.Option(None, "--from-column", help="Column to apply a regex pattern to"),
-    pattern: Optional[str] = typer.Option(None, "--pattern", help="Regex pattern; first capture group used, else full match"),
-    extract_iban_from: Optional[str] = typer.Option(None, "--extract-iban-from", help="Column to auto-detect a single IBAN from"),
+    column: Optional[str] = typer.Option(None, "--column", "-c", help="Column name to read directly"),
+    from_column: Optional[str] = typer.Option(None, "--from-column", "-F", help="Column to apply a regex pattern to"),
+    pattern: Optional[str] = typer.Option(None, "--pattern", "-p", help="Regex pattern; first capture group used, else full match"),
+    extract_iban_from: Optional[str] = typer.Option(None, "--extract-iban-from", "-e", help="Column to auto-detect a single IBAN from"),
 ) -> None:
     """Set a mapping field in a bank config.
 
@@ -399,8 +399,8 @@ def config_counterparties() -> None:
 @counterparties_app.command(name="add")
 def config_counterparties_add(
     name: str = typer.Option(..., "--name", "-n", help="Normalized counterparty name"),
-    contains: Optional[str] = typer.Option(None, "--contains", help="Description substring to match (case-insensitive)"),
-    iban: Optional[str] = typer.Option(None, "--iban", help="Exact IBAN to match (case-insensitive)"),
+    contains: Optional[str] = typer.Option(None, "--contains", "-t", help="Description substring to match (case-insensitive)"),
+    iban: Optional[str] = typer.Option(None, "--iban", "-i", help="Exact IBAN to match (case-insensitive)"),
     category: Optional[str] = typer.Option(None, "--category", "-k", help="Category to assign to this counterparty"),
 ) -> None:
     """Add a matcher and/or category to a counterparty entry (creates it if it doesn't exist yet).
@@ -447,9 +447,9 @@ def config_counterparties_add(
 @counterparties_app.command(name="edit")
 def config_counterparties_edit(
     name: str = typer.Option(..., "--name", "-n", help="Name of the counterparty entry to edit"),
-    new_name: Optional[str] = typer.Option(None, "--new-name", help="Rename the counterparty"),
-    contains: Optional[str] = typer.Option(None, "--contains", help="Replace the description_contains matcher"),
-    iban: Optional[str] = typer.Option(None, "--iban", help="Replace the iban matcher"),
+    new_name: Optional[str] = typer.Option(None, "--new-name", "-N", help="Rename the counterparty"),
+    contains: Optional[str] = typer.Option(None, "--contains", "-t", help="Replace the description_contains matcher"),
+    iban: Optional[str] = typer.Option(None, "--iban", "-i", help="Replace the iban matcher"),
     category: Optional[str] = typer.Option(None, "--category", "-k", help="Set or replace the category"),
 ) -> None:
     """Change fields on an existing counterparty entry.
@@ -521,7 +521,7 @@ def config_counterparties_edit(
 @counterparties_app.command(name="remove")
 def config_counterparties_remove(
     name: Optional[str] = typer.Option(None, "--name", "-n", help="Name of the counterparty entry to remove"),
-    all_: bool = typer.Option(False, "--all", help="Remove all counterparty entries (requires confirmation)"),
+    all_: bool = typer.Option(False, "--all", "-a", help="Remove all counterparty entries (requires confirmation)"),
 ) -> None:
     """Remove a counterparty entry, or all entries with --all.
 
@@ -612,7 +612,7 @@ def config_categories_add(
 @categories_app.command(name="edit")
 def config_categories_edit(
     counterparty: str = typer.Option(..., "--counterparty", "-c", help="Counterparty name of the rule to edit"),
-    new_counterparty: Optional[str] = typer.Option(None, "--new-counterparty", help="Rename the counterparty key"),
+    new_counterparty: Optional[str] = typer.Option(None, "--new-counterparty", "-C", help="Rename the counterparty key"),
     category: Optional[str] = typer.Option(None, "--category", "-k", help="Replace the category"),
 ) -> None:
     """Change an existing category rule.
@@ -671,7 +671,7 @@ def config_categories_edit(
 @categories_app.command(name="remove")
 def config_categories_remove(
     counterparty: Optional[str] = typer.Option(None, "--counterparty", "-c", help="Counterparty name of the rule to remove"),
-    all_: bool = typer.Option(False, "--all", help="Remove all category rules (requires confirmation)"),
+    all_: bool = typer.Option(False, "--all", "-a", help="Remove all category rules (requires confirmation)"),
 ) -> None:
     """Remove a category rule, or all rules with --all.
 
@@ -712,8 +712,8 @@ def add(
     description: str = typer.Argument(..., help="Short description of the expense"),
     category: str = typer.Option("", "--category", "-c", help="Expense category"),
     expense_date: Optional[str] = typer.Option(None, "--date", "-d", help="Date in YYYY-MM-DD format (default: today)"),
-    expense_time: Optional[str] = typer.Option(None, "--time", help="Time in HH:MM:SS format"),
-    iban: str = typer.Option("", "--iban", help="Counterparty IBAN"),
+    expense_time: Optional[str] = typer.Option(None, "--time", "-t", help="Time in HH:MM:SS format"),
+    iban: str = typer.Option("", "--iban", "-i", help="Counterparty IBAN"),
     counterparty: str = typer.Option("", "--counterparty", "-n", help="Counterparty name"),
 ) -> None:
     """Add a new expense.
@@ -746,20 +746,20 @@ def add(
 @app.command(name="list")
 def list_expenses(
     category: Optional[str] = typer.Option(None, "--category", "-c", help="Filter by category"),
-    counterparty: Optional[str] = typer.Option(None, "--counterparty", "-cp", help="Filter by counterparty"),
-    from_date: Optional[str] = typer.Option(None, "--from", help="Start date YYYY-MM-DD (inclusive)"),
-    to_date: Optional[str] = typer.Option(None, "--to", help="End date YYYY-MM-DD (inclusive)"),
-    month: Optional[str] = typer.Option(None, "--month", help="Filter by month: YYYY-MM or 1-12"),
-    year: Optional[int] = typer.Option(None, "--year", help="Year to use with --month number (default: current year)"),
-    unreviewed: bool = typer.Option(False, "--unreviewed", help="Show only expenses missing counterparty or category"),
-    reviewed: bool = typer.Option(False, "--reviewed", help="Show only expenses with counterparty and category set"),
+    counterparty: Optional[str] = typer.Option(None, "--counterparty", "-p", help="Filter by counterparty"),
+    from_date: Optional[str] = typer.Option(None, "--from", "-f", help="Start date YYYY-MM-DD (inclusive)"),
+    to_date: Optional[str] = typer.Option(None, "--to", "-t", help="End date YYYY-MM-DD (inclusive)"),
+    month: Optional[str] = typer.Option(None, "--month", "-m", help="Filter by month: YYYY-MM or 1-12"),
+    year: Optional[int] = typer.Option(None, "--year", "-y", help="Year to use with --month number (default: current year)"),
+    unreviewed: bool = typer.Option(False, "--unreviewed", "-u", help="Show only expenses missing counterparty or category"),
+    reviewed: bool = typer.Option(False, "--reviewed", "-r", help="Show only expenses with counterparty and category set"),
     wide: bool = typer.Option(False, "--wide", "-w", help="Show all columns (description, IBAN, time)"),
-    min_amount: Optional[float] = typer.Option(None, "--min", help="Hide transactions with abs(amount) below this value"),
-    max_amount: Optional[float] = typer.Option(None, "--max", help="Hide transactions with abs(amount) above this value"),
-    direction: Optional[str] = typer.Option(None, "--direction", help="Filter by direction: 'in' or 'out'"),
-    without_category: Optional[str] = typer.Option(None, "--without-category", help="Exclude categories (comma-separated)"),
-    without_counterparty: Optional[str] = typer.Option(None, "--without-counterparty", help="Exclude counterparties (comma-separated)"),
-    expense_id: Optional[str] = typer.Option(None, "--id", help="Show expense(s) by ID (comma-separated)"),
+    min_amount: Optional[float] = typer.Option(None, "--min", "-l", help="Hide transactions with abs(amount) below this value"),
+    max_amount: Optional[float] = typer.Option(None, "--max", "-x", help="Hide transactions with abs(amount) above this value"),
+    direction: Optional[str] = typer.Option(None, "--direction", "-d", help="Filter by direction: 'in' or 'out'"),
+    without_category: Optional[str] = typer.Option(None, "--without-category", "-C", help="Exclude categories (comma-separated)"),
+    without_counterparty: Optional[str] = typer.Option(None, "--without-counterparty", "-P", help="Exclude counterparties (comma-separated)"),
+    expense_id: Optional[str] = typer.Option(None, "--id", "-i", help="Show expense(s) by ID (comma-separated)"),
 ) -> None:
     """List expenses, optionally filtered by category, date range, amount, or direction.
 
@@ -861,7 +861,7 @@ def list_expenses(
 def import_expenses(
     filepath: str = typer.Argument(..., help="Path to the bank CSV file"),
     bank: str = typer.Option(..., "--bank", "-b", help="Bank name matching a config in ~/.expense_cli/banks/<name>.toml"),
-    force: bool = typer.Option(False, "--force", help="Import all rows, skipping duplicate detection"),
+    force: bool = typer.Option(False, "--force", "-F", help="Import all rows, skipping duplicate detection"),
 ) -> None:
     """Import expenses from a bank statement file (CSV, TAB, or XLS).
 
@@ -1345,8 +1345,8 @@ def _pick(prompt_text: str, options: list[str], header: str = "", color: str = "
 
 @app.command()
 def review(
-    unidentified: bool = typer.Option(False, "--unidentified", help="Show only expenses with no counterparty"),
-    uncategorized: bool = typer.Option(False, "--uncategorized", help="Show only uncategorized expenses"),
+    unidentified: bool = typer.Option(False, "--unidentified", "-u", help="Show only expenses with no counterparty"),
+    uncategorized: bool = typer.Option(False, "--uncategorized", "-U", help="Show only uncategorized expenses"),
     month: Optional[int] = typer.Option(None, "--month", "-m", min=1, max=12, help="Filter by month (1-12)"),
     year: Optional[int] = typer.Option(None, "--year", "-y", help="Filter by year (e.g. 2024)"),
     info: bool = typer.Option(False, "--info", "-i", help="Show unreviewed count per month and exit"),
@@ -1579,7 +1579,7 @@ def review(
 @app.command()
 def edit(
     expense_id: int = typer.Argument(..., help="ID of the expense to update"),
-    iban: Optional[str] = typer.Option(None, "--iban", help="Set counterparty IBAN"),
+    iban: Optional[str] = typer.Option(None, "--iban", "-i", help="Set counterparty IBAN"),
     counterparty: Optional[str] = typer.Option(None, "--counterparty", "-n", help="Set counterparty name"),
     category: Optional[str] = typer.Option(None, "--category", "-c", help="Set category"),
 ) -> None:
@@ -1619,7 +1619,7 @@ def edit(
 @app.command()
 def delete(
     expense_id: Optional[int] = typer.Argument(None, help="ID of the expense to delete"),
-    all_: bool = typer.Option(False, "--all", help="Delete all expenses (requires confirmation)"),
+    all_: bool = typer.Option(False, "--all", "-a", help="Delete all expenses (requires confirmation)"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt for single delete"),
 ) -> None:
     """Delete a single expense by ID, or all expenses with --all.
@@ -1679,18 +1679,18 @@ def delete(
 
 @app.command()
 def insights(
-    by: str = typer.Option("category", "--by", help="Group by: category or counterparty"),
-    from_date: Optional[str] = typer.Option(None, "--from", help="Start date (YYYY-MM-DD, inclusive)"),
-    to_date: Optional[str] = typer.Option(None, "--to", help="End date (YYYY-MM-DD, inclusive)"),
-    month: Optional[str] = typer.Option(None, "--month", help="Filter by month: YYYY-MM or 1-12"),
-    year: Optional[int] = typer.Option(None, "--year", help="Year to use with --month number (default: current year)"),
-    direction: Optional[str] = typer.Option(None, "--direction", help="Filter rows: 'in' or 'out' (default: show all)"),
-    without: Optional[str] = typer.Option(None, "--without", help="Exclude values for the active --by dimension (comma-separated)"),
-    without_category: Optional[str] = typer.Option(None, "--without-category", help="Exclude categories (comma-separated)"),
-    without_counterparty: Optional[str] = typer.Option(None, "--without-counterparty", help="Exclude counterparties (comma-separated)"),
-    chart: bool = typer.Option(False, "--chart", help="Show a bar chart below the table"),
-    trend: bool = typer.Option(False, "--trend", help="Show monthly pivot table (months × groups)"),
-    months: Optional[int] = typer.Option(None, "--months", help="Number of recent months for --trend (default: 6)"),
+    by: str = typer.Option("category", "--by", "-b", help="Group by: category or counterparty"),
+    from_date: Optional[str] = typer.Option(None, "--from", "-f", help="Start date (YYYY-MM-DD, inclusive)"),
+    to_date: Optional[str] = typer.Option(None, "--to", "-t", help="End date (YYYY-MM-DD, inclusive)"),
+    month: Optional[str] = typer.Option(None, "--month", "-m", help="Filter by month: YYYY-MM or 1-12"),
+    year: Optional[int] = typer.Option(None, "--year", "-y", help="Year to use with --month number (default: current year)"),
+    direction: Optional[str] = typer.Option(None, "--direction", "-d", help="Filter rows: 'in' or 'out' (default: show all)"),
+    without: Optional[str] = typer.Option(None, "--without", "-w", help="Exclude values for the active --by dimension (comma-separated)"),
+    without_category: Optional[str] = typer.Option(None, "--without-category", "-C", help="Exclude categories (comma-separated)"),
+    without_counterparty: Optional[str] = typer.Option(None, "--without-counterparty", "-P", help="Exclude counterparties (comma-separated)"),
+    chart: bool = typer.Option(False, "--chart", "-c", help="Show a bar chart below the table"),
+    trend: bool = typer.Option(False, "--trend", "-T", help="Show monthly pivot table (months × groups)"),
+    months: Optional[int] = typer.Option(None, "--months", "-M", help="Number of recent months for --trend (default: 6)"),
 ) -> None:
     """Summarize transactions grouped by category or counterparty with a bar chart.
 
