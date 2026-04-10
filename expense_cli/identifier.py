@@ -10,8 +10,8 @@ _HEADER = """\
 # Rules are evaluated in order; the first match wins.
 # Each entry has a name and optionally one or both matchers and/or a category:
 #
-#   iban                 — exact match on counterparty IBAN (case-insensitive)
-#   description_contains — substring match against the transaction description (case-insensitive)
+#   iban                 — exact match on counterparty IBAN (case-insensitive); can be a single string or a list of strings
+#   description_contains — substring match against the transaction description (case-insensitive); can be a single string or a list of strings
 #   category             — category assigned to this counterparty (optional)"""
 
 _FIELD_ORDER = ["name", "iban", "description_contains", "category"]
@@ -60,10 +60,16 @@ def identify(iban: str, description: str, counterparties: list[dict]) -> str:
     description_lower = description.lower()
 
     for cp in counterparties:
-        if "iban" in cp and iban_lower and cp["iban"].lower() == iban_lower:
-            return cp["name"]
-        if "description_contains" in cp and cp["description_contains"].lower() in description_lower:
-            return cp["name"]
+        iban_val = cp.get("iban")
+        if iban_val is not None and iban_lower:
+            ibans = [iban_val] if isinstance(iban_val, str) else iban_val
+            if any(i.lower() == iban_lower for i in ibans):
+                return cp["name"]
+        dc = cp.get("description_contains")
+        if dc is not None:
+            patterns = [dc] if isinstance(dc, str) else dc
+            if any(p.lower() in description_lower for p in patterns):
+                return cp["name"]
 
     return ""
 
@@ -73,11 +79,23 @@ def rule_exists(name: str) -> bool:
     return any(cp.get("name", "").lower() == name.lower() for cp in load_counterparties())
 
 
-def matcher_exists(name: str, matcher_type: str) -> bool:
-    """Return True if the entry for *name* already has *matcher_type* set."""
+def matcher_exists(name: str, matcher_type: str, value: str | None = None) -> bool:
+    """Return True if the entry for *name* already has *matcher_type* set.
+
+    For description_contains, if *value* is given, checks whether that specific
+    value is already in the list (to block exact duplicates while allowing new patterns).
+    Without *value*, checks for presence only (used for iban).
+    """
     for cp in load_counterparties():
-        if cp.get("name", "").lower() == name.lower() and matcher_type in cp:
-            return True
+        if cp.get("name", "").lower() != name.lower():
+            continue
+        if value is not None and matcher_type in ("description_contains", "iban"):
+            val = cp.get(matcher_type)
+            if val is None:
+                return False
+            patterns = [val] if isinstance(val, str) else val
+            return value.lower() in [p.lower() for p in patterns]
+        return matcher_type in cp
     return False
 
 
@@ -97,7 +115,15 @@ def save_counterparty_rule(
 
     for entry in entries:
         if entry.get("name", "").lower() == name_lower:
-            if matcher_type is not None:
+            if matcher_type in ("description_contains", "iban"):
+                existing = entry.get(matcher_type)
+                if existing is None:
+                    entry[matcher_type] = matcher_value
+                elif isinstance(existing, str):
+                    entry[matcher_type] = [existing, matcher_value]
+                else:
+                    entry[matcher_type] = existing + [matcher_value]
+            elif matcher_type is not None:
                 entry[matcher_type] = matcher_value
             if category is not None:
                 entry["category"] = category

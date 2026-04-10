@@ -122,3 +122,14 @@ def test_migration_backfills_direction_negative(tmp_storage):
         row["amount"] = "-10.00"
         writer.writerow(row)
     assert read_expenses()[0]["direction"] == "out"
+
+
+def test_migration_adds_split_id_column(tmp_storage):
+    """CSV written without split_id gets empty string on all rows after migration."""
+    old_fields = [f for f in FIELDNAMES if f != "split_id"]
+    with storage.CSV_PATH.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=old_fields)
+        writer.writeheader()
+        writer.writerow({f: make_row().get(f, "") for f in old_fields})
+    rows = read_expenses()
+    assert rows[0]["split_id"] == ""

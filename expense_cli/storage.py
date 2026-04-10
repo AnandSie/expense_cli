@@ -6,7 +6,7 @@ DATA_DIR = Path.home() / ".expense_cli"
 CSV_PATH = DATA_DIR / "expenses.csv"
 
 # TODO: create a type/datatype/record which we can read in, instead of hardcode strings 
-FIELDNAMES = ["id", "date", "weekday", "time", "amount", "direction", "description", "iban", "counterparty", "category", "source_hash"]
+FIELDNAMES = ["id", "date", "weekday", "time", "amount", "direction", "description", "iban", "counterparty", "category", "note", "source_hash", "split_id"]
 
 # TODO: can we maybe create a seperate csv storage next to normal storage for decoupling, next to this generic core stoarge
 

@@ -1,0 +1,3 @@
+- [Roadmap Structure](project_roadmap.md) — milestones v0.2–v0.6, dependency chain, deferred items; ROADMAP.md is canonical backlog
+- [Architecture Decisions](project_architecture.md) — module boundaries, direction field, amount-as-string, source_hash, new modules anticipated
+- [User Profile](user_profile.md) — building personal CLI, wants agent-ready documentation, cares about SOLID + TDD

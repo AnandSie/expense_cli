@@ -371,3 +371,110 @@ def test_migrate_skips_if_no_legacy_file(tmp_storage):
     save_counterparty_rule("netflix", "description_contains", "netflix")
     entries = load_counterparties()
     assert len(entries) == 1  # nothing changed
+
+
+# ---------------------------------------------------------------------------
+# description_contains as a list
+# ---------------------------------------------------------------------------
+
+def test_description_contains_list_matches_any_pattern():
+    counterparties = [{"description_contains": ["shell", "bp", "tinq"], "name": "tankstation"}]
+    assert identify("", "Betaling Shell Hoogvliet", counterparties) == "tankstation"
+    assert identify("", "BP tankstation A16", counterparties) == "tankstation"
+    assert identify("", "Tinq betaling", counterparties) == "tankstation"
+
+
+def test_description_contains_list_no_match():
+    counterparties = [{"description_contains": ["shell", "bp"], "name": "tankstation"}]
+    assert identify("", "esso betaling", counterparties) == ""
+
+
+def test_description_contains_string_still_works():
+    counterparties = [{"description_contains": "netflix", "name": "Netflix"}]
+    assert identify("", "monthly netflix subscription", counterparties) == "Netflix"
+
+
+def test_save_converts_string_to_list_on_second_add(tmp_storage):
+    save_counterparty_rule("tankstation", "description_contains", "shell")
+    save_counterparty_rule("tankstation", "description_contains", "bp")
+    entries = load_counterparties()
+    assert len(entries) == 1
+    assert entries[0]["description_contains"] == ["shell", "bp"]
+
+
+def test_save_appends_to_existing_list(tmp_storage):
+    save_counterparty_rule("tankstation", "description_contains", "shell")
+    save_counterparty_rule("tankstation", "description_contains", "bp")
+    save_counterparty_rule("tankstation", "description_contains", "tinq")
+    entries = load_counterparties()
+    assert len(entries) == 1
+    assert entries[0]["description_contains"] == ["shell", "bp", "tinq"]
+
+
+def test_matcher_exists_checks_value_not_presence(tmp_storage):
+    save_counterparty_rule("tankstation", "description_contains", "shell")
+    # Different value → not a duplicate, should be addable
+    assert matcher_exists("tankstation", "description_contains", "bp") is False
+    # Same value → duplicate, should be blocked
+    assert matcher_exists("tankstation", "description_contains", "shell") is True
+
+
+def test_matcher_exists_no_value_checks_presence(tmp_storage):
+    save_counterparty_rule("tankstation", "description_contains", "shell")
+    # No value argument → old-style presence check (used for iban)
+    assert matcher_exists("tankstation", "description_contains") is True
+    assert matcher_exists("tankstation", "iban") is False
+
+
+def test_edit_replaces_list_with_single_value(tmp_storage):
+    save_counterparty_rule("tankstation", "description_contains", "shell")
+    save_counterparty_rule("tankstation", "description_contains", "bp")
+    edit_counterparty_rule("tankstation", description_contains="pompstation")
+    entries = load_counterparties()
+    assert entries[0]["description_contains"] == "pompstation"
+
+
+def test_identify_with_list_and_iban_both_present():
+    counterparties = [
+        {"iban": "NL01TEST", "description_contains": ["shell", "bp"], "name": "tankstation"},
+    ]
+    assert identify("NL01TEST", "other", counterparties) == "tankstation"
+    assert identify("", "bp betaling", counterparties) == "tankstation"
+
+
+def test_identify_iban_list_first_match():
+    counterparties = [
+        {"iban": ["NL01AAAA0000000001", "NL02BBBB0000000002"], "name": "landlord"},
+    ]
+    assert identify("NL01AAAA0000000001", "", counterparties) == "landlord"
+    assert identify("NL02BBBB0000000002", "", counterparties) == "landlord"
+    assert identify("NL03CCCC0000000003", "", counterparties) == ""
+
+
+def test_identify_iban_list_case_insensitive():
+    counterparties = [
+        {"iban": ["NL01AAAA0000000001", "NL02BBBB0000000002"], "name": "landlord"},
+    ]
+    assert identify("nl01aaaa0000000001", "", counterparties) == "landlord"
+
+
+def test_save_multiple_ibans(tmp_storage):
+    save_counterparty_rule("landlord", "iban", "NL01OLD")
+    save_counterparty_rule("landlord", "iban", "NL02NEW")
+    entries = load_counterparties()
+    assert len(entries) == 1
+    assert entries[0]["iban"] == ["NL01OLD", "NL02NEW"]
+
+
+def test_matcher_exists_iban_specific_value(tmp_storage):
+    save_counterparty_rule("landlord", "iban", "NL01OLD")
+    save_counterparty_rule("landlord", "iban", "NL02NEW")
+    assert matcher_exists("landlord", "iban", "NL01OLD") is True
+    assert matcher_exists("landlord", "iban", "NL02NEW") is True
+    assert matcher_exists("landlord", "iban", "NL03OTHER") is False
+
+
+def test_matcher_exists_iban_presence_check(tmp_storage):
+    save_counterparty_rule("landlord", "iban", "NL01OLD")
+    assert matcher_exists("landlord", "iban") is True
+    assert matcher_exists("landlord", "description_contains") is False

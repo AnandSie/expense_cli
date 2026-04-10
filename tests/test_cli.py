@@ -135,6 +135,19 @@ def test_config_list_shows_all_fields(tmp_storage):
     assert "transfers" in result.output
 
 
+def test_config_list_sorts_subcategories_under_parent(tmp_storage):
+    runner.invoke(app, ["config", "counterparties", "add", "--name", "lidl", "--iban", "NL01", "--category", "food/groceries"])
+    runner.invoke(app, ["config", "counterparties", "add", "--name", "mcdonalds", "--contains", "mcd", "--category", "food/restaurant"])
+    runner.invoke(app, ["config", "counterparties", "add", "--name", "ns", "--iban", "NL02", "--category", "transport"])
+    result = runner.invoke(app, ["config", "list"])
+    assert result.exit_code == 0
+    food_groceries_pos = result.output.find("food/groceries")
+    food_restaurant_pos = result.output.find("food/restaurant")
+    transport_pos = result.output.find("transport")
+    assert food_groceries_pos < transport_pos
+    assert food_restaurant_pos < transport_pos
+
+
 def test_config_bare_shows_list(tmp_storage):
     runner.invoke(app, ["config", "counterparties", "add",
                         "--name", "spotify", "--contains", "spotify", "--category", "subscriptions"])
@@ -467,6 +480,23 @@ def test_add_with_time(tmp_storage):
     assert read_expenses()[0]["time"] == "14:30:00"
 
 
+def test_add_with_note(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "Test", "--note", "reimbursed by work"])
+    assert read_expenses()[0]["note"] == "reimbursed by work"
+
+
+def test_add_note_truncated_at_max_length(tmp_storage):
+    from expense_cli.cli import NOTE_MAX_LEN
+    long_note = "x" * (NOTE_MAX_LEN + 10)
+    runner.invoke(app, ["add", "10.00", "Test", "--note", long_note])
+    assert read_expenses()[0]["note"] == "x" * NOTE_MAX_LEN
+
+
+def test_add_without_note_stores_empty(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "Test"])
+    assert read_expenses()[0]["note"] == ""
+
+
 def test_import_stores_weekday(tmp_storage):
     _write_bank_config(tmp_storage)
     csv_file = tmp_storage / "statement.csv"
@@ -546,6 +576,32 @@ def test_list_filter_by_category(tmp_storage):
     assert "20.00" not in result.output
 
 
+def test_list_filter_by_parent_category_matches_subcategories(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--category", "food/groceries"])
+    runner.invoke(app, ["add", "20.00", "B", "--category", "food/restaurant"])
+    runner.invoke(app, ["add", "99.00", "C", "--category", "transport"])
+    result = runner.invoke(app, ["list", "--category", "food"])
+    assert "10.00" in result.output
+    assert "20.00" in result.output
+    assert "99.00" not in result.output
+
+
+def test_list_filter_by_exact_subcategory(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--category", "food/groceries"])
+    runner.invoke(app, ["add", "20.00", "B", "--category", "food/restaurant"])
+    result = runner.invoke(app, ["list", "--category", "food/groceries"])
+    assert "10.00" in result.output
+    assert "20.00" not in result.output
+
+
+def test_list_exclude_category_excludes_subcategories(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--category", "food/groceries"])
+    runner.invoke(app, ["add", "20.00", "B", "--category", "transport"])
+    result = runner.invoke(app, ["list", "--exclude-category", "food"])
+    assert "10.00" not in result.output
+    assert "20.00" in result.output
+
+
 def test_list_filter_by_counterparty(tmp_storage):
     runner.invoke(app, ["add", "10.00", "A", "--counterparty", "Albert"])
     runner.invoke(app, ["add", "20.00", "B", "--counterparty", "Shell"])
@@ -557,7 +613,7 @@ def test_list_filter_by_counterparty(tmp_storage):
 def test_list_filter_by_counterparty_shortflag(tmp_storage):
     runner.invoke(app, ["add", "10.00", "A", "--counterparty", "Albert"])
     runner.invoke(app, ["add", "20.00", "B", "--counterparty", "Shell"])
-    result = runner.invoke(app, ["list", "-cp", "Albert"])
+    result = runner.invoke(app, ["list", "-p", "Albert"])
     assert "10.00" in result.output
     assert "20.00" not in result.output
 
@@ -621,40 +677,86 @@ def test_list_by_id_partial_not_found(tmp_storage):
     assert result.exit_code != 0
 
 
-def test_list_without_category_single(tmp_storage):
+def test_list_exclude_category_single(tmp_storage):
     runner.invoke(app, ["add", "10.00", "A", "--category", "food"])
     runner.invoke(app, ["add", "20.00", "B", "--category", "transport"])
-    result = runner.invoke(app, ["list", "--without-category", "food"])
+    result = runner.invoke(app, ["list", "--exclude-category", "food"])
     assert "20.00" in result.output
     assert "10.00" not in result.output
 
 
-def test_list_without_category_multiple(tmp_storage):
+def test_list_exclude_category_multiple(tmp_storage):
     runner.invoke(app, ["add", "10.00", "A", "--category", "food"])
     runner.invoke(app, ["add", "20.00", "B", "--category", "transport"])
     runner.invoke(app, ["add", "30.00", "C", "--category", "health"])
-    result = runner.invoke(app, ["list", "--without-category", "food,transport"])
+    result = runner.invoke(app, ["list", "--exclude-category", "food,transport"])
     assert "30.00" in result.output
     assert "10.00" not in result.output
     assert "20.00" not in result.output
 
 
-def test_list_without_counterparty_single(tmp_storage):
+def test_list_exclude_counterparty_single(tmp_storage):
     runner.invoke(app, ["add", "10.00", "A", "--counterparty", "Albert"])
     runner.invoke(app, ["add", "20.00", "B", "--counterparty", "Shell"])
-    result = runner.invoke(app, ["list", "--without-counterparty", "Albert"])
+    result = runner.invoke(app, ["list", "--exclude-counterparty", "Albert"])
     assert "20.00" in result.output
     assert "10.00" not in result.output
 
 
-def test_list_without_counterparty_multiple(tmp_storage):
+def test_list_exclude_counterparty_multiple(tmp_storage):
     runner.invoke(app, ["add", "10.00", "A", "--counterparty", "Albert"])
     runner.invoke(app, ["add", "20.00", "B", "--counterparty", "Shell"])
     runner.invoke(app, ["add", "30.00", "C", "--counterparty", "Gym"])
-    result = runner.invoke(app, ["list", "--without-counterparty", "Albert,Shell"])
+    result = runner.invoke(app, ["list", "--exclude-counterparty", "Albert,Shell"])
     assert "30.00" in result.output
     assert "10.00" not in result.output
     assert "20.00" not in result.output
+
+
+def test_list_include_category_single(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--category", "food"])
+    runner.invoke(app, ["add", "20.00", "B", "--category", "transport"])
+    runner.invoke(app, ["add", "30.00", "C", "--category", "health"])
+    result = runner.invoke(app, ["list", "--include-category", "food"])
+    assert "10.00" in result.output
+    assert "20.00" not in result.output
+    assert "30.00" not in result.output
+
+
+def test_list_include_category_multiple(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--category", "food"])
+    runner.invoke(app, ["add", "20.00", "B", "--category", "transport"])
+    runner.invoke(app, ["add", "30.00", "C", "--category", "health"])
+    result = runner.invoke(app, ["list", "--include-category", "food,health"])
+    assert "10.00" in result.output
+    assert "30.00" in result.output
+    assert "20.00" not in result.output
+
+
+def test_list_include_category_prefix_match(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--category", "food/groceries"])
+    runner.invoke(app, ["add", "20.00", "B", "--category", "transport"])
+    result = runner.invoke(app, ["list", "--include-category", "food"])
+    assert "10.00" in result.output
+    assert "20.00" not in result.output
+
+
+def test_list_include_counterparty_single(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--counterparty", "Albert"])
+    runner.invoke(app, ["add", "20.00", "B", "--counterparty", "Shell"])
+    result = runner.invoke(app, ["list", "--include-counterparty", "Albert"])
+    assert "10.00" in result.output
+    assert "20.00" not in result.output
+
+
+def test_list_include_counterparty_multiple(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--counterparty", "Albert"])
+    runner.invoke(app, ["add", "20.00", "B", "--counterparty", "Shell"])
+    runner.invoke(app, ["add", "99.00", "C", "--counterparty", "Gym"])
+    result = runner.invoke(app, ["list", "--include-counterparty", "Albert,Shell"])
+    assert "Albert" in result.output
+    assert "Shell" in result.output
+    assert "Gym" not in result.output
 
 
 # --- CLI: edit ---
@@ -681,6 +783,46 @@ def test_edit_requires_at_least_one_field(tmp_storage):
     runner.invoke(app, ["add", "10.00", "Test"])
     result = runner.invoke(app, ["edit", "1"])
     assert result.exit_code == 1
+
+
+def test_edit_multi_category(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A"])
+    runner.invoke(app, ["add", "20.00", "B"])
+    runner.invoke(app, ["add", "30.00", "C"])
+    result = runner.invoke(app, ["edit", "1,2,3", "--category", "food"])
+    assert result.exit_code == 0
+    expenses = read_expenses()
+    assert all(e["category"] == "food" for e in expenses)
+
+
+def test_edit_multi_partial_not_found(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A"])
+    result = runner.invoke(app, ["edit", "1,99", "--category", "food"])
+    # partial success: found ID 1, not 99 — exit 0 with error printed to stderr
+    assert read_expenses()[0]["category"] == "food"
+
+
+def test_edit_multi_all_not_found(tmp_storage):
+    result = runner.invoke(app, ["edit", "98,99", "--category", "food"])
+    assert result.exit_code == 1
+
+
+def test_edit_invalid_id_format(tmp_storage):
+    result = runner.invoke(app, ["edit", "abc", "--category", "food"])
+    assert result.exit_code == 1
+
+
+def test_edit_note(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "Test"])
+    result = runner.invoke(app, ["edit", "1", "--note", "reimbursed"])
+    assert result.exit_code == 0
+    assert read_expenses()[0]["note"] == "reimbursed"
+
+
+def test_edit_note_clear(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "Test", "--note", "old note"])
+    runner.invoke(app, ["edit", "1", "--note", ""])
+    assert read_expenses()[0]["note"] == ""
 
 
 # --- CLI: delete ---
@@ -928,6 +1070,28 @@ def test_review_interactive_back_at_first_expense_redoes_it(tmp_storage, monkeyp
     assert expenses[0]["category"] == "food"
 
 
+def test_review_note_step_sets_note(tmp_storage, monkeypatch):
+    """_pick_note returning a value saves it on the expense."""
+    runner.invoke(app, ["add", "10.00", "Test"])
+    # Return "" from _pick so counterparty/category fields are skipped but transaction is NOT skipped
+    monkeypatch.setattr("expense_cli.cli._pick", lambda *a, **kw: "")
+    monkeypatch.setattr("expense_cli.cli._pick_note", lambda *a, **kw: "reimbursed by work")
+    runner.invoke(app, ["review"])
+    from expense_cli.storage import read_expenses
+    assert read_expenses()[0]["note"] == "reimbursed by work"
+
+
+def test_review_note_step_skipped_when_skip_transaction(tmp_storage, monkeypatch):
+    """When a transaction is skipped (^S), the note step is not reached."""
+    from expense_cli.cli import _SKIP
+    runner.invoke(app, ["add", "10.00", "Test"])
+    note_calls: list = []
+    monkeypatch.setattr("expense_cli.cli._pick", lambda *a, **kw: _SKIP)
+    monkeypatch.setattr("expense_cli.cli._pick_note", lambda *a, **kw: note_calls.append(1) or "x")
+    runner.invoke(app, ["review"])
+    assert note_calls == []
+
+
 # --- CLI: import ---
 
 def _write_bank_config(tmp_storage):
@@ -970,7 +1134,7 @@ def test_import_deduplication(tmp_storage):
     ])
     runner.invoke(app, ["import", str(csv_file), "--bank", "test_bank"])
     result = runner.invoke(app, ["import", str(csv_file), "--bank", "test_bank"])
-    assert "skipped 1 duplicates" in result.output
+    assert "Skipped 1 duplicate" in result.output
     assert len(read_expenses()) == 1
 
 
@@ -1003,6 +1167,153 @@ def test_import_same_key_different_raw_not_deduplicated(tmp_storage):
     result = runner.invoke(app, ["import", str(csv_file), "--bank", "test_bank"])
     assert result.exit_code == 0
     assert len(read_expenses()) == 2
+
+
+# --- CLI: split ---
+
+def test_split_noninteractive_two_parts(tmp_storage):
+    runner.invoke(app, ["add", "--category", "overig", "--", "-100.00", "Credit card"])
+    result = runner.invoke(app, ["split", "1", "--part", "food:60", "--part", "transport:40", "--yes"])
+    assert result.exit_code == 0
+    expenses = read_expenses()
+    children = [e for e in expenses if e.get("split_id") == "1"]
+    assert len(children) == 2
+    amounts = {e["category"]: float(e["amount"]) for e in children}
+    assert amounts["food"] == pytest.approx(-60.0)
+    assert amounts["transport"] == pytest.approx(-40.0)
+    for c in children:
+        assert c["split_id"] == "1"
+        assert c["note"] == "split from #1"
+
+
+def test_split_noninteractive_remainder(tmp_storage):
+    runner.invoke(app, ["add", "--category", "overig", "--", "-100.00", "Credit card"])
+    result = runner.invoke(app, ["split", "1", "--part", "food:60", "--part", "transport", "--yes"])
+    assert result.exit_code == 0
+    children = [e for e in read_expenses() if e.get("split_id") == "1"]
+    amounts = {e["category"]: float(e["amount"]) for e in children}
+    assert amounts["food"] == pytest.approx(-60.0)
+    assert amounts["transport"] == pytest.approx(-40.0)
+
+
+def test_split_noninteractive_percent(tmp_storage):
+    runner.invoke(app, ["add", "--category", "overig", "--", "-100.00", "Credit card"])
+    result = runner.invoke(app, ["split", "1", "--part", "food:60%", "--part", "transport", "--yes"])
+    assert result.exit_code == 0
+    children = [e for e in read_expenses() if e.get("split_id") == "1"]
+    amounts = {e["category"]: float(e["amount"]) for e in children}
+    assert amounts["food"] == pytest.approx(-60.0)
+    assert amounts["transport"] == pytest.approx(-40.0)
+
+
+def test_split_amounts_exceed_parent(tmp_storage):
+    runner.invoke(app, ["add", "--category", "overig", "--", "-100.00", "Credit card"])
+    result = runner.invoke(app, ["split", "1", "--part", "food:60", "--part", "transport:50", "--yes"])
+    assert result.exit_code == 1
+    assert not any(e.get("split_id") for e in read_expenses())
+
+
+def test_split_no_remainder_and_gap(tmp_storage):
+    runner.invoke(app, ["add", "--category", "overig", "--", "-100.00", "Credit card"])
+    result = runner.invoke(app, ["split", "1", "--part", "food:60", "--part", "transport:30", "--yes"])
+    assert result.exit_code == 1
+    assert not any(e.get("split_id") for e in read_expenses())
+
+
+def test_split_expense_not_found(tmp_storage):
+    result = runner.invoke(app, ["split", "999", "--part", "food:50", "--part", "transport:50", "--yes"])
+    assert result.exit_code == 1
+
+
+def test_split_already_a_parent(tmp_storage):
+    runner.invoke(app, ["add", "--category", "overig", "--", "-100.00", "Credit card"])
+    runner.invoke(app, ["split", "1", "--part", "food:60", "--part", "transport:40", "--yes"])
+    result = runner.invoke(app, ["split", "1", "--part", "food:50", "--part", "housing:50", "--yes"])
+    assert result.exit_code == 1
+
+
+def test_split_already_a_child(tmp_storage):
+    runner.invoke(app, ["add", "--category", "overig", "--", "-100.00", "Credit card"])
+    runner.invoke(app, ["split", "1", "--part", "food:60", "--part", "transport:40", "--yes"])
+    children = [e for e in read_expenses() if e.get("split_id") == "1"]
+    child_id = int(children[0]["id"])
+    result = runner.invoke(app, ["split", str(child_id), "--part", "food:30", "--part", "transport:30", "--yes"])
+    assert result.exit_code == 1
+
+
+def test_split_children_inherit_parent_fields(tmp_storage):
+    runner.invoke(app, ["add", "--counterparty", "ing", "--iban", "NL01INGB0001234567", "--category", "overig", "--", "-100.00", "Betaling"])
+    runner.invoke(app, ["split", "1", "--part", "food:60", "--part", "transport:40", "--yes"])
+    children = [e for e in read_expenses() if e.get("split_id") == "1"]
+    for c in children:
+        assert c["counterparty"] == "ing"
+        assert c["iban"] == "NL01INGB0001234567"
+        assert c["description"] == "Betaling"
+        assert c["date"] == read_expenses()[0]["date"]
+
+
+def test_insights_excludes_split_parent(tmp_storage):
+    runner.invoke(app, ["add", "--category", "overig", "--", "-100.00", "Credit card"])
+    runner.invoke(app, ["split", "1", "--part", "food:60", "--part", "transport:40", "--yes"])
+    result = runner.invoke(app, ["insights"])
+    assert result.exit_code == 0
+    assert "food" in result.output
+    assert "transport" in result.output
+    assert "overig" not in result.output
+
+
+def test_insights_split_totals_correct(tmp_storage):
+    runner.invoke(app, ["add", "--category", "overig", "--", "-100.00", "Credit card"])
+    runner.invoke(app, ["split", "1", "--part", "food:60", "--part", "transport:40", "--yes"])
+    result = runner.invoke(app, ["insights"])
+    assert "60.00" in result.output
+    assert "40.00" in result.output
+
+
+def test_insights_trend_excludes_split_parent(tmp_storage):
+    runner.invoke(app, ["add", "--category", "overig", "--date", "2026-01-15", "--", "-100.00", "Credit card"])
+    runner.invoke(app, ["split", "1", "--part", "food:60", "--part", "transport:40", "--yes"])
+    result = runner.invoke(app, ["insights", "--trend", "--from", "2026-01-01", "--to", "2026-01-31"])
+    assert result.exit_code == 0
+    assert "food" in result.output
+    assert "overig" not in result.output
+
+
+def test_list_shows_split_marker(tmp_storage):
+    runner.invoke(app, ["add", "--category", "overig", "--", "-100.00", "Credit card"])
+    runner.invoke(app, ["split", "1", "--part", "food:60", "--part", "transport:40", "--yes"])
+    result = runner.invoke(app, ["list"])
+    assert result.exit_code == 0
+    assert "(split)" in result.output
+
+
+def test_list_shows_child_arrow(tmp_storage):
+    runner.invoke(app, ["add", "--category", "overig", "--", "-100.00", "Credit card"])
+    runner.invoke(app, ["split", "1", "--part", "food:60", "--part", "transport:40", "--yes"])
+    result = runner.invoke(app, ["list"])
+    assert "↳" in result.output
+
+
+def test_list_id_shows_children_of_split_parent(tmp_storage):
+    runner.invoke(app, ["add", "--category", "overig", "--", "-100.00", "Credit card"])
+    runner.invoke(app, ["split", "1", "--part", "food:60", "--part", "transport:40", "--yes"])
+    result = runner.invoke(app, ["list", "--id", "1"])
+    assert result.exit_code == 0
+    assert "(split)" in result.output
+    assert "↳" in result.output
+    assert "food" in result.output
+    assert "transport" in result.output
+
+
+def test_split_dedup_safety(tmp_storage):
+    """Source hash on the parent is preserved after splitting."""
+    runner.invoke(app, ["add", "--category", "overig", "--", "-100.00", "Credit card"])
+    # Manually set a source_hash on the parent to simulate an imported row
+    from expense_cli.storage import update_expense
+    update_expense(1, {"source_hash": "abc123"})
+    runner.invoke(app, ["split", "1", "--part", "food:60", "--part", "transport:40", "--yes"])
+    parent = next(e for e in read_expenses() if int(e["id"]) == 1)
+    assert parent["source_hash"] == "abc123"
 
 
 # --- CLI: insights ---
@@ -1169,67 +1480,113 @@ def test_insights_direction_invalid(tmp_storage):
     assert result.exit_code == 1
 
 
-def test_insights_without_category_single(tmp_storage):
+def test_insights_exclude_category_single(tmp_storage):
     runner.invoke(app, ["add", "10.00", "A", "--category", "food"])
     runner.invoke(app, ["add", "20.00", "B", "--category", "transport"])
-    result = runner.invoke(app, ["insights", "--without-category", "food"])
+    result = runner.invoke(app, ["insights", "--exclude-category", "food"])
     assert "transport" in result.output
     assert "food" not in result.output
 
 
-def test_insights_without_category_multiple(tmp_storage):
+def test_insights_exclude_category_multiple(tmp_storage):
     runner.invoke(app, ["add", "10.00", "A", "--category", "food"])
     runner.invoke(app, ["add", "20.00", "B", "--category", "transport"])
     runner.invoke(app, ["add", "30.00", "C", "--category", "health"])
-    result = runner.invoke(app, ["insights", "--without-category", "food,transport"])
+    result = runner.invoke(app, ["insights", "--exclude-category", "food,transport"])
     assert "health" in result.output
     assert "food" not in result.output
     assert "transport" not in result.output
 
 
-def test_insights_without_counterparty_single(tmp_storage):
+def test_insights_exclude_counterparty_single(tmp_storage):
     runner.invoke(app, ["add", "10.00", "A", "--counterparty", "Albert"])
     runner.invoke(app, ["add", "20.00", "B", "--counterparty", "Shell"])
-    result = runner.invoke(app, ["insights", "--by", "counterparty", "--without-counterparty", "Albert"])
+    result = runner.invoke(app, ["insights", "--by", "counterparty", "--exclude-counterparty", "Albert"])
     assert "Shell" in result.output
     assert "Albert" not in result.output
 
 
-def test_insights_without_counterparty_multiple(tmp_storage):
+def test_insights_exclude_counterparty_multiple(tmp_storage):
     runner.invoke(app, ["add", "10.00", "A", "--counterparty", "Albert"])
     runner.invoke(app, ["add", "20.00", "B", "--counterparty", "Shell"])
     runner.invoke(app, ["add", "30.00", "C", "--counterparty", "Gym"])
-    result = runner.invoke(app, ["insights", "--by", "counterparty", "--without-counterparty", "Albert,Shell"])
+    result = runner.invoke(app, ["insights", "--by", "counterparty", "--exclude-counterparty", "Albert,Shell"])
     assert "Gym" in result.output
     assert "Albert" not in result.output
     assert "Shell" not in result.output
 
 
-def test_insights_without_defaults_to_category_when_by_category(tmp_storage):
+def test_insights_exclude_defaults_to_category_when_by_category(tmp_storage):
     runner.invoke(app, ["add", "10.00", "A", "--category", "food"])
     runner.invoke(app, ["add", "20.00", "B", "--category", "transport"])
-    result = runner.invoke(app, ["insights", "--without", "food"])
+    result = runner.invoke(app, ["insights", "--exclude", "food"])
     assert "transport" in result.output
     assert "food" not in result.output
 
 
-def test_insights_without_defaults_to_counterparty_when_by_counterparty(tmp_storage):
+def test_insights_exclude_defaults_to_counterparty_when_by_counterparty(tmp_storage):
     runner.invoke(app, ["add", "10.00", "A", "--counterparty", "Albert"])
     runner.invoke(app, ["add", "20.00", "B", "--counterparty", "Shell"])
-    result = runner.invoke(app, ["insights", "--by", "counterparty", "--without", "Albert"])
+    result = runner.invoke(app, ["insights", "--by", "counterparty", "--exclude", "Albert"])
     assert "Shell" in result.output
     assert "Albert" not in result.output
 
 
-def test_insights_without_and_without_counterparty_combined(tmp_storage):
-    """--without (category) combined with --without-counterparty for cross-type filtering."""
+def test_insights_exclude_and_exclude_counterparty_combined(tmp_storage):
+    """--exclude (category) combined with --exclude-counterparty for cross-type filtering."""
     runner.invoke(app, ["add", "10.00", "A", "--category", "food", "--counterparty", "Albert"])
     runner.invoke(app, ["add", "20.00", "B", "--category", "transport", "--counterparty", "Shell"])
     runner.invoke(app, ["add", "30.00", "C", "--category", "health", "--counterparty", "Shell"])
-    result = runner.invoke(app, ["insights", "--without", "food", "--without-counterparty", "Shell"])
+    result = runner.invoke(app, ["insights", "--exclude", "food", "--exclude-counterparty", "Shell"])
     assert "health" not in result.output
     assert "transport" not in result.output
     assert "food" not in result.output
+
+
+def test_insights_include_category_single(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--category", "food"])
+    runner.invoke(app, ["add", "20.00", "B", "--category", "transport"])
+    runner.invoke(app, ["add", "30.00", "C", "--category", "health"])
+    result = runner.invoke(app, ["insights", "--include-category", "food"])
+    assert "food" in result.output
+    assert "transport" not in result.output
+    assert "health" not in result.output
+
+
+def test_insights_include_category_multiple(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--category", "food"])
+    runner.invoke(app, ["add", "20.00", "B", "--category", "transport"])
+    runner.invoke(app, ["add", "30.00", "C", "--category", "health"])
+    result = runner.invoke(app, ["insights", "--include-category", "food,health"])
+    assert "food" in result.output
+    assert "health" in result.output
+    assert "transport" not in result.output
+
+
+def test_insights_include_counterparty(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--counterparty", "Albert"])
+    runner.invoke(app, ["add", "20.00", "B", "--counterparty", "Shell"])
+    runner.invoke(app, ["add", "30.00", "C", "--counterparty", "Gym"])
+    result = runner.invoke(app, ["insights", "--by", "counterparty", "--include-counterparty", "Albert,Shell"])
+    assert "Albert" in result.output
+    assert "Shell" in result.output
+    assert "Gym" not in result.output
+
+
+def test_insights_include_context_aware_category(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--category", "food"])
+    runner.invoke(app, ["add", "20.00", "B", "--category", "transport"])
+    result = runner.invoke(app, ["insights", "--include", "food"])
+    assert "food" in result.output
+    assert "transport" not in result.output
+
+
+def test_insights_include_context_aware_counterparty(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--counterparty", "Albert"])
+    runner.invoke(app, ["add", "20.00", "B", "--counterparty", "Shell"])
+    result = runner.invoke(app, ["insights", "--by", "counterparty", "--include", "Albert"])
+    assert "Albert" in result.output
+    assert "Shell" not in result.output
 
 
 def test_render_bar_proportional():
@@ -1354,8 +1711,108 @@ def test_insights_trend_by_counterparty(tmp_storage):
     runner.invoke(app, ["add", "20.00", "B", "--counterparty", "Shell", "--date", "2026-02-15"])
     result = runner.invoke(app, ["insights", "--trend", "--by", "counterparty",
                                   "--from", "2026-01-01", "--to", "2026-02-28"])
+    assert result.exit_code == 0
     assert "Albert" in result.output
     assert "Shell" in result.output
+
+
+def test_insights_subcategories_shown_separately_by_default(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--category", "food/groceries"])
+    runner.invoke(app, ["add", "20.00", "B", "--category", "food/restaurant"])
+    result = runner.invoke(app, ["insights"])
+    # Parent row shown bold, subcategories indented (e.g. "  groceries", "  restaurant")
+    assert "food" in result.output
+    assert "groceries" in result.output
+    assert "restaurant" in result.output
+
+
+def test_insights_rollup_merges_subcategories_and_sums(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--category", "food/groceries"])
+    runner.invoke(app, ["add", "20.00", "B", "--category", "food/restaurant"])
+    result = runner.invoke(app, ["insights", "--rollup"])
+    assert "food" in result.output
+    assert "food/groceries" not in result.output
+    assert "food/restaurant" not in result.output
+    assert "30.00" in result.output
+
+
+def test_insights_rollup_plain_categories_unaffected(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--category", "groceries"])
+    runner.invoke(app, ["add", "20.00", "B", "--category", "transport"])
+    result = runner.invoke(app, ["insights", "--rollup"])
+    assert "groceries" in result.output
+    assert "transport" in result.output
+
+
+def test_insights_exclude_with_parent_excludes_subcategories(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--category", "food/groceries"])
+    runner.invoke(app, ["add", "20.00", "B", "--category", "transport"])
+    result = runner.invoke(app, ["insights", "--exclude", "food"])
+    assert "food" not in result.output
+    assert "transport" in result.output
+
+
+def test_insights_category_filter_matches_subcategories(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--category", "food/groceries"])
+    runner.invoke(app, ["add", "20.00", "B", "--category", "food/restaurant"])
+    runner.invoke(app, ["add", "99.00", "C", "--category", "transport"])
+    result = runner.invoke(app, ["insights", "--category", "food"])
+    assert "groceries" in result.output
+    assert "restaurant" in result.output
+    assert "transport" not in result.output
+
+
+def test_insights_category_filter_exact_subcategory(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--category", "food/groceries"])
+    runner.invoke(app, ["add", "20.00", "B", "--category", "food/restaurant"])
+    result = runner.invoke(app, ["insights", "--category", "food/groceries"])
+    # Only food/groceries matches; shown as parent "food" + child "  groceries"
+    assert "groceries" in result.output
+    assert "restaurant" not in result.output
+
+
+def test_insights_category_filter_combined_with_rollup(tmp_storage):
+    runner.invoke(app, ["add", "10.00", "A", "--category", "food/groceries"])
+    runner.invoke(app, ["add", "20.00", "B", "--category", "food/restaurant"])
+    runner.invoke(app, ["add", "99.00", "C", "--category", "transport"])
+    result = runner.invoke(app, ["insights", "--category", "food", "--rollup"])
+    assert "food" in result.output
+    assert "transport" not in result.output
+    assert "30.00" in result.output
+
+
+def test_insights_min_hides_small_groups(tmp_storage):
+    _add_expense_row("-5.00", "food")
+    _add_expense_row("-200.00", "housing")
+    result = runner.invoke(app, ["insights", "--min", "10"])
+    assert "housing" in result.output
+    assert "food" not in result.output
+
+
+def test_insights_max_hides_large_groups(tmp_storage):
+    _add_expense_row("-5.00", "food")
+    _add_expense_row("-200.00", "housing")
+    result = runner.invoke(app, ["insights", "--max", "10"])
+    assert "food" in result.output
+    assert "housing" not in result.output
+
+
+def test_insights_min_net_effect(tmp_storage):
+    # out=100, in=90 → net abs = 10
+    _add_expense_row("-100.00", "gifts")
+    _add_expense_row("90.00", "gifts")
+    result_hidden = runner.invoke(app, ["insights", "--min", "15"])
+    assert "gifts" not in result_hidden.output
+    result_shown = runner.invoke(app, ["insights", "--min", "5"])
+    assert "gifts" in result_shown.output
+
+
+def test_insights_trend_min_filter(tmp_storage):
+    _add_expense_row("-5.00", "food")
+    _add_expense_row("-200.00", "housing")
+    result = runner.invoke(app, ["insights", "--trend", "--min", "10"])
+    assert "housing" in result.output
+    assert "food" not in result.output
 
 
 # --- CLI: import ---
@@ -1486,3 +1943,102 @@ def test_reapply_shows_table_of_updated_expenses(tmp_storage):
     assert "Spotify" in result.output
     assert "subscriptions" in result.output
     assert "1 expense" in result.output
+
+
+# --- CLI: ratios ---
+
+def test_ratios_basic(tmp_storage):
+    runner.invoke(app, ["add", "1000.00", "salary", "--category", "salaris", "--date", "2025-11-15"])
+    runner.invoke(app, ["add", "200.00", "invest", "--category", "investeren", "--date", "2025-11-20"])
+    result = runner.invoke(app, ["ratios", "--numerator", "investeren", "--denominator", "salaris",
+                                 "--from", "2025-11-01", "--to", "2025-11-30"])
+    assert result.exit_code == 0
+    assert "20.0%" in result.output
+
+
+def test_ratios_zero_denominator_shows_dash(tmp_storage):
+    runner.invoke(app, ["add", "200.00", "invest", "--category", "investeren", "--date", "2025-11-20"])
+    result = runner.invoke(app, ["ratios", "--numerator", "investeren", "--denominator", "salaris",
+                                 "--from", "2025-11-01", "--to", "2025-11-30"])
+    assert result.exit_code == 0
+    assert "—" in result.output
+
+
+def test_ratios_prefix_match(tmp_storage):
+    runner.invoke(app, ["add", "1000.00", "salary", "--category", "salaris/bonus", "--date", "2025-11-15"])
+    runner.invoke(app, ["add", "250.00", "etf", "--category", "investeren/etf", "--date", "2025-11-20"])
+    result = runner.invoke(app, ["ratios", "--numerator", "investeren", "--denominator", "salaris",
+                                 "--from", "2025-11-01", "--to", "2025-11-30"])
+    assert result.exit_code == 0
+    assert "25.0%" in result.output
+
+
+def test_ratios_multiple_numerators(tmp_storage):
+    runner.invoke(app, ["add", "1000.00", "salary", "--category", "salaris", "--date", "2025-11-15"])
+    runner.invoke(app, ["add", "200.00", "etf", "--category", "investeren", "--date", "2025-11-20"])
+    runner.invoke(app, ["add", "100.00", "pension", "--category", "pensioen", "--date", "2025-11-22"])
+    result = runner.invoke(app, ["ratios", "--numerator", "investeren", "--numerator", "pensioen",
+                                 "--denominator", "salaris",
+                                 "--from", "2025-11-01", "--to", "2025-11-30"])
+    assert result.exit_code == 0
+    assert "30.0%" in result.output
+
+
+def test_ratios_direction_independent(tmp_storage):
+    # Both expenses use positive amounts; abs() must not change the ratio
+    runner.invoke(app, ["add", "1000.00", "salary", "--category", "salaris", "--date", "2025-11-15"])
+    runner.invoke(app, ["add", "200.00", "invest", "--category", "investeren", "--date", "2025-11-20"])
+    result = runner.invoke(app, ["ratios", "--numerator", "investeren", "--denominator", "salaris",
+                                 "--from", "2025-11-01", "--to", "2025-11-30"])
+    assert result.exit_code == 0
+    assert "20.0%" in result.output
+
+
+def test_ratios_label_displayed(tmp_storage):
+    runner.invoke(app, ["add", "1000.00", "salary", "--category", "salaris", "--date", "2025-11-15"])
+    runner.invoke(app, ["add", "200.00", "invest", "--category", "investeren", "--date", "2025-11-20"])
+    result = runner.invoke(app, ["ratios", "--numerator", "investeren", "--denominator", "salaris",
+                                 "--label", "inv_rate",
+                                 "--from", "2025-11-01", "--to", "2025-11-30"])
+    assert result.exit_code == 0
+    assert "inv_rate" in result.output
+
+
+def test_ratios_from_to(tmp_storage):
+    runner.invoke(app, ["add", "1000.00", "salary", "--category", "salaris", "--date", "2025-11-15"])
+    runner.invoke(app, ["add", "200.00", "invest", "--category", "investeren", "--date", "2025-11-20"])
+    result = runner.invoke(app, ["ratios", "--numerator", "investeren", "--denominator", "salaris",
+                                 "--from", "2025-11-01", "--to", "2025-11-30"])
+    assert result.exit_code == 0
+    assert "2025-11" in result.output
+    assert "20.0%" in result.output
+
+
+def test_ratios_over_100_percent_shown(tmp_storage):
+    runner.invoke(app, ["add", "100.00", "salary", "--category", "salaris", "--date", "2025-11-15"])
+    runner.invoke(app, ["add", "200.00", "invest", "--category", "investeren", "--date", "2025-11-20"])
+    result = runner.invoke(app, ["ratios", "--numerator", "investeren", "--denominator", "salaris",
+                                 "--from", "2025-11-01", "--to", "2025-11-30"])
+    assert result.exit_code == 0
+    assert "200.0%" in result.output
+
+
+def test_ratios_exclude_subcategory(tmp_storage):
+    runner.invoke(app, ["add", "1000.00", "salary",   "--category", "salaris",              "--date", "2025-11-15"])
+    runner.invoke(app, ["add",  "200.00", "etf",      "--category", "investeren/etf",        "--date", "2025-11-20"])
+    runner.invoke(app, ["add",  "100.00", "donation", "--category", "investeren/donation",   "--date", "2025-11-21"])
+    result = runner.invoke(app, ["ratios", "--numerator", "investeren", "--denominator", "salaris",
+                                 "--exclude", "investeren/donation",
+                                 "--from", "2025-11-01", "--to", "2025-11-30"])
+    assert result.exit_code == 0
+    assert "20.0%" in result.output   # 200/1000, donation excluded
+
+
+def test_ratios_exclude_does_not_affect_unrelated_categories(tmp_storage):
+    runner.invoke(app, ["add", "1000.00", "salary", "--category", "salaris",    "--date", "2025-11-15"])
+    runner.invoke(app, ["add",  "200.00", "etf",    "--category", "investeren", "--date", "2025-11-20"])
+    result = runner.invoke(app, ["ratios", "--numerator", "investeren", "--denominator", "salaris",
+                                 "--exclude", "investeren/donation",
+                                 "--from", "2025-11-01", "--to", "2025-11-30"])
+    assert result.exit_code == 0
+    assert "20.0%" in result.output   # nothing was actually excluded

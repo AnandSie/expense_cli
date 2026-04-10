@@ -4,26 +4,64 @@ Small Python CLI for tracking and categorizing personal expenses. Uses CSV for s
 
 ## Installation
 
+Requires Python >= 3.10 and [pipx](https://pipx.pypa.io/stable/installation/).
+
+**Install from source:**
+
 ```bash
-python -m venv .venv
-.venv/Scripts/pip install -e .
+git clone https://github.com/AnandSie/expense_cli.git
+cd expense_cli
+pipx install .
 ```
 
-Requires Python >= 3.10.
+`expense` is now available globally in any terminal without activating a virtual environment.
+
+**Upgrading after a `git pull`:**
+
+```bash
+pipx reinstall expense-cli
+```
+
+---
+
+### Contributing / development install
+
+```bash
+git clone https://github.com/AnandSie/expense_cli.git
+cd expense_cli
+pipx install -e .                          # editable: source changes take effect immediately
+pip install -e ".[dev]"                    # install pytest into your local venv for running tests
+```
 
 ## Usage
 
 ```bash
-expense add <amount> <description> [--category CAT] [--date DATE] [--iban IBAN] [--counterparty NAME]
-expense list [--category CAT] [--from DATE] [--to DATE] [--unreviewed] [--reviewed]
-expense import <file> --bank <bank_name>
+expense add <amount> <description> [--category CAT] [--date DATE] [--time TIME] [--iban IBAN] [--counterparty NAME]
+expense list [--category CAT] [--counterparty NAME] [--from DATE] [--to DATE] [--month YYYY-MM] [--year N]
+            [--unreviewed] [--reviewed] [--wide] [--direction in|out]
+            [--min N] [--max N] [--without-category CAT,...] [--without-counterparty NAME,...] [--id ID,...]
+expense import <file> --bank <bank_name> [--force]
 expense review [--unidentified] [--uncategorized]
 expense edit <id> [--iban IBAN] [--counterparty NAME] [--category CAT]
-expense remove <id> [--yes]
+expense delete <id> [--yes]
+expense delete --all
+expense insights [--by category|counterparty] [--from DATE] [--to DATE] [--month YYYY-MM]
+                 [--direction in|out] [--chart] [--trend] [--rollup]
+                 [--without VALUE,...] [--min N] [--max N]
+expense reapply
+expense config list
 expense config bank-list
 expense config bank <bank_name>
-expense config counterparties
-expense config categories
+expense config bank new <bank_name>
+expense config bank-set <bank_name> --field FIELD [--column COL] [--from-column COL --pattern REGEX] [--extract-iban-from COL]
+expense config counterparties [list]
+expense config counterparties add --name NAME [--iban IBAN] [--contains TEXT] [--category CAT]
+expense config counterparties edit <name> [--iban IBAN] [--contains TEXT] [--category CAT]
+expense config counterparties remove <name>
+expense config categories [list]
+expense config categories add --counterparty NAME --category CAT
+expense config categories edit <counterparty> --category CAT
+expense config categories remove <counterparty>
 expense version
 ```
 
@@ -97,7 +135,16 @@ from_column = "Verwendungszweck"
 pattern     = 'Auftraggeber:\s*(.+?)(?:\s{2,}|$)'
 ```
 
-Each mapping field can be a plain string (column name) or a dict with `column` (direct read) and/or `from_column` + `pattern` (regex fallback; first capture group wins, else full match).
+Each mapping field can be:
+- A plain string — direct column name
+- A dict with `column` (direct read) and/or `from_column` + `pattern` (regex; first capture group wins, else full match)
+- A dict with `extract_iban_from` — scans the given column for a valid IBAN; used only if exactly one match is found
+
+```toml
+iban = "IBANColumn"                                              # direct column
+iban = { column = "IBAN", extract_iban_from = "Description" }   # column first, auto-detect as fallback
+iban = { extract_iban_from = "Description" }                    # auto-detect IBAN from text
+```
 
 **Supported `[bank]` keys:**
 
@@ -107,6 +154,7 @@ Each mapping field can be a plain string (column name) or a dict with `column` (
 | `date_format` | `"%Y-%m-%d"` | Python strptime format |
 | `decimal_separator` | `"."` | use `","` for European formats |
 | `delimiter` | `","` | CSV only; `.tab` files use tab automatically |
+| `time_format` | *(none)* | optional; Python strptime format (e.g. `"%H:%M:%S"`) |
 
 **Supported date format examples:**
 
