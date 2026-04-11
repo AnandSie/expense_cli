@@ -52,6 +52,12 @@ def test_validate_bank_config_unknown_bank_key():
     assert any("unknown_key" in e for e in errors)
 
 
+def test_validate_bank_config_unknown_mapping_key():
+    config = {"mapping": {"date": "Date", "amount": "Amount", "merchant": "Merchant"}}
+    errors = _validate_bank_config(config)
+    assert any("mapping.merchant" in e for e in errors)
+
+
 # --- _validate_counterparties_config ---
 
 def test_validate_counterparties_valid_iban():
@@ -1104,6 +1110,17 @@ def _write_bank_config(tmp_storage):
     (tmp_storage / "banks" / "test_bank.toml").write_text(config, encoding="utf-8")
 
 
+def _write_bank_config_with_time_from_description(tmp_storage):
+    config = (
+        '[bank]\nencoding = "utf-8"\ndate_format = "%Y-%m-%d"\n'
+        'decimal_separator = "."\ndelimiter = ","\n\n'
+        '[mapping]\ndate = "Date"\namount = "Amount"\n'
+        'description = "Description"\niban = "IBAN"\ncounterparty = "Counterparty"\n'
+        'time = { from_column = "Description", pattern = \'^(\\d{2}:\\d{2})\' }\n'
+    )
+    (tmp_storage / "banks" / "test_bank.toml").write_text(config, encoding="utf-8")
+
+
 def _write_csv(path, rows):
     with path.open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=["Date", "Amount", "Description", "IBAN", "Counterparty"])
@@ -1152,6 +1169,24 @@ def test_import_basic(tmp_storage):
     assert result.exit_code == 0
     assert "Imported 1" in result.output
     assert read_expenses()[0]["amount"] == "42.50"
+
+
+def test_import_rejects_invalid_bank_config_unknown_mapping_field(tmp_storage):
+    config = (
+        '[bank]\nencoding = "utf-8"\ndate_format = "%Y-%m-%d"\n'
+        'decimal_separator = "."\ndelimiter = ","\n\n'
+        '[mapping]\ndate = "Date"\namount = "Amount"\nmerchant = "Merchant"\n'
+    )
+    (tmp_storage / "banks" / "test_bank.toml").write_text(config, encoding="utf-8")
+    csv_file = tmp_storage / "statement.csv"
+    _write_csv(csv_file, [
+        {"Date": "2026-01-01", "Amount": "42.50", "Description": "Groceries",
+         "IBAN": "NL91ABNA0417164300", "Counterparty": "Albert Heijn"},
+    ])
+    result = runner.invoke(app, ["import", str(csv_file), "--bank", "test_bank"])
+    assert result.exit_code == 1
+    assert "Bank config is invalid" in result.output
+    assert "mapping.merchant" in result.output
 
 
 def test_import_deduplication(tmp_storage):
@@ -1214,6 +1249,18 @@ def test_import_reports_possible_duplicates_with_default_match_fields(tmp_storag
     assert len(read_expenses()) == 2
 
 
+def test_import_time_can_be_extracted_from_description_regex(tmp_storage):
+    _write_bank_config_with_time_from_description(tmp_storage)
+    csv_file = tmp_storage / "statement.csv"
+    _write_csv(csv_file, [
+        {"Date": "2026-01-01", "Amount": "42.50", "Description": "12:34 payment",
+         "IBAN": "", "Counterparty": ""},
+    ])
+    result = runner.invoke(app, ["import", str(csv_file), "--bank", "test_bank"])
+    assert result.exit_code == 0
+    assert read_expenses()[0]["time"] == "12:34:00"
+
+
 def test_import_possible_duplicates_respect_custom_match_fields(tmp_storage):
     _write_bank_config(tmp_storage)
     runner.invoke(app, ["add", "42.50", "Old desc", "--date", "2026-01-01", "--iban", "NL01"])
@@ -1256,6 +1303,75 @@ def test_import_force_still_reports_possible_duplicates(tmp_storage):
     assert result.exit_code == 0
     assert "Possible duplicates (date, amount)" in result.output
     assert len(read_expenses()) == 2
+
+
+def test_reimport_time_fills_empty_matching_row(tmp_storage):
+    _write_bank_config(tmp_storage)
+    csv_file = tmp_storage / "statement.csv"
+    _write_csv(csv_file, [
+        {"Date": "2026-01-01", "Amount": "42.50", "Description": "12:34 payment",
+         "IBAN": "", "Counterparty": ""},
+    ])
+    runner.invoke(app, ["import", str(csv_file), "--bank", "test_bank"])
+    _write_bank_config_with_time_from_description(tmp_storage)
+    result = runner.invoke(app, ["reimport", str(csv_file), "--bank", "test_bank", "--field", "time"])
+    assert result.exit_code == 0
+    assert "1 updated" in result.output
+    assert read_expenses()[0]["time"] == "12:34:00"
+
+
+def test_reimport_does_not_overwrite_existing_time(tmp_storage):
+    _write_bank_config_with_time_from_description(tmp_storage)
+    csv_file = tmp_storage / "statement.csv"
+    _write_csv(csv_file, [
+        {"Date": "2026-01-01", "Amount": "42.50", "Description": "12:34 payment",
+         "IBAN": "", "Counterparty": ""},
+    ])
+    runner.invoke(app, ["import", str(csv_file), "--bank", "test_bank"])
+    result = runner.invoke(app, ["reimport", str(csv_file), "--bank", "test_bank", "--field", "time"])
+    assert result.exit_code == 0
+    assert "Nothing to update." in result.output
+    assert "1 already had a value" in result.output
+    assert read_expenses()[0]["time"] == "12:34:00"
+
+
+def test_reimport_skips_rows_without_source_hash_match(tmp_storage):
+    _write_bank_config_with_time_from_description(tmp_storage)
+    csv_file = tmp_storage / "statement.csv"
+    _write_csv(csv_file, [
+        {"Date": "2026-01-01", "Amount": "42.50", "Description": "12:34 payment",
+         "IBAN": "", "Counterparty": ""},
+    ])
+    result = runner.invoke(app, ["reimport", str(csv_file), "--bank", "test_bank", "--field", "time"])
+    assert result.exit_code == 0
+    assert "Nothing to update." in result.output
+    assert "1 no source_hash match" in result.output
+
+
+def test_reimport_reports_legacy_rows_without_source_hash(tmp_storage):
+    _write_bank_config_with_time_from_description(tmp_storage)
+    _write_expense_fixture("1", date="2026-01-01", amount="42.50", description="12:34 payment")
+    csv_file = tmp_storage / "statement.csv"
+    _write_csv(csv_file, [
+        {"Date": "2026-01-01", "Amount": "42.50", "Description": "12:34 payment",
+         "IBAN": "", "Counterparty": ""},
+    ])
+    result = runner.invoke(app, ["reimport", str(csv_file), "--bank", "test_bank", "--field", "time"])
+    assert result.exit_code == 0
+    assert "1 legacy row(s) without source_hash" in result.output
+    assert read_expenses()[0]["time"] == ""
+
+
+def test_reimport_invalid_field_errors(tmp_storage):
+    _write_bank_config(tmp_storage)
+    csv_file = tmp_storage / "statement.csv"
+    _write_csv(csv_file, [
+        {"Date": "2026-01-01", "Amount": "42.50", "Description": "12:34 payment",
+         "IBAN": "", "Counterparty": ""},
+    ])
+    result = runner.invoke(app, ["reimport", str(csv_file), "--bank", "test_bank", "--field", "iban"])
+    assert result.exit_code == 1
+    assert "--field must be one of: time" in result.output
 
 
 # --- CLI: duplicates ---

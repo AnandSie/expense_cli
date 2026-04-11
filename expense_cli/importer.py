@@ -74,9 +74,19 @@ def parse_date(value: str, date_format: str) -> str:
     return datetime.strptime(value.strip(), date_format).date().isoformat()
 
 
-def parse_time(value: str, time_format: str) -> str:
+def parse_time(value: str, time_format: str | None = None) -> str:
     """Parse time string to HH:MM:SS."""
-    return datetime.strptime(value.strip(), time_format).strftime("%H:%M:%S")
+    value = value.strip()
+    formats = [time_format] if time_format else []
+    formats.extend(["%H:%M:%S", "%H:%M"])
+    for fmt in formats:
+        if not fmt:
+            continue
+        try:
+            return datetime.strptime(value, fmt).strftime("%H:%M:%S")
+        except ValueError:
+            continue
+    raise ValueError(f"Could not parse time value '{value}'")
 
 
 def _read_xls_file(filepath: str, config: dict) -> list[dict]:
@@ -113,13 +123,14 @@ def _read_xls_file(filepath: str, config: dict) -> list[dict]:
         else:
             amount_val = f"{parse_amount(str(amount_cell.value), decimal_separator):.2f}"
 
-        time_format = bank_cfg.get("time_format")
         raw = {name: str(sheet.cell(row_idx, col_index[name]).value).strip() for name in col_index}
+        time_format = bank_cfg.get("time_format")
+        time_raw = _extract_field(mapping["time"], raw) if "time" in mapping else ""
         # TODO instead of hardcoded fieldnames here, maybe we can define and create an class/record/datatype
         parsed_amount = amount_cell.value if amount_cell.ctype == xlrd.XL_CELL_NUMBER else parse_amount(str(amount_cell.value), decimal_separator)
         row = {
             "date": date_val,
-            "time": parse_time(raw[mapping["time"]], time_format) if "time" in mapping and time_format else "",
+            "time": parse_time(time_raw, time_format) if time_raw else "",
             "amount": amount_val,
             "direction": "out" if parsed_amount < 0 else "in",
             "description": str(cell(mapping["description"]).value).strip() if "description" in mapping else "",
@@ -152,9 +163,10 @@ def read_bank_file(filepath: str, config: dict) -> list[dict]:
     with open(filepath, newline="", encoding=encoding) as f:
         for raw in csv.DictReader(f, delimiter=delimiter):
             parsed_amount = parse_amount(raw[mapping["amount"]], decimal_separator)
+            time_raw = _extract_field(mapping["time"], raw) if "time" in mapping else ""
             row = {
                 "date": parse_date(raw[mapping["date"]], date_format),
-                "time": parse_time(raw[mapping["time"]], time_format) if "time" in mapping and time_format else "",
+                "time": parse_time(time_raw, time_format) if time_raw else "",
                 "amount": f"{parsed_amount:.2f}",
                 "direction": "out" if parsed_amount < 0 else "in",
                 "description": raw.get(mapping.get("description", ""), "").strip(),

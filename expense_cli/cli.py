@@ -16,7 +16,10 @@ from expense_cli.utils import _sparkline, _category_parent, _category_matches, _
 app = typer.Typer(
     help="A command-line tool for organizing and categorizing expenses."
 )
-config_app = typer.Typer(help="Inspect and validate configuration files.", invoke_without_command=True)
+config_app = typer.Typer(
+    help="Inspect and validate configuration files. Bank mappings support: date, amount, description, time, iban, counterparty.",
+    invoke_without_command=True,
+)
 app.add_typer(config_app, name="config")
 counterparties_app = typer.Typer(help="Manage counterparty identification rules.", invoke_without_command=True)
 config_app.add_typer(counterparties_app, name="counterparties")
@@ -73,6 +76,11 @@ amount = "Amount"
 # counterparty = "Counterparty"  # optional
 # time = "Time"                  # optional
 """
+
+_REQUIRED_BANK_MAPPING_FIELDS = ("date", "amount")
+_OPTIONAL_BANK_MAPPING_FIELDS = ("description", "time", "iban", "counterparty")
+_ALLOWED_BANK_MAPPING_FIELDS = _REQUIRED_BANK_MAPPING_FIELDS + _OPTIONAL_BANK_MAPPING_FIELDS
+_REIMPORTABLE_FIELDS = ("time",)
 
 
 def _parse_month(month: str, year: Optional[int] = None) -> tuple[str, str]:
@@ -139,16 +147,19 @@ def _validate_bank_config(config: dict) -> list[str]:
         errors.append("Missing required [mapping] section")
         return errors
     mapping = config["mapping"]
-    for required in ("date", "amount"):
+    for required in _REQUIRED_BANK_MAPPING_FIELDS:
         if required not in mapping:
             errors.append(f"mapping.{required}: required field is missing")
         else:
             errors.extend(_validate_field_config(mapping[required], required))
-    for optional in ("description", "time", "iban", "counterparty"):
+    for optional in _OPTIONAL_BANK_MAPPING_FIELDS:
         if optional in mapping:
             errors.extend(_validate_field_config(mapping[optional], optional))
     if "name" in mapping:
         errors.append("mapping.name: rename to mapping.counterparty")
+    for key in mapping:
+        if key not in _ALLOWED_BANK_MAPPING_FIELDS and key != "name":
+            errors.append(f"mapping.{key}: unknown field")
     known_bank_keys = {"encoding", "date_format", "time_format", "decimal_separator", "delimiter"}
     for key in config.get("bank", {}):
         if key not in known_bank_keys:
@@ -294,13 +305,17 @@ def _config_bank_new_impl(bank: str) -> None:
 @config_app.command(name="bank-set")
 def config_bank_set(
     bank: str = typer.Argument(..., help="Bank name to configure"),
-    field: str = typer.Option(..., "--field", "-f", help="Mapping field to set (e.g. iban, date, amount)"),
+    field: str = typer.Option(..., "--field", "-f", help="Mapping field to set. Allowed: date, amount, description, time, iban, counterparty"),
     column: Optional[str] = typer.Option(None, "--column", "-c", help="Column name to read directly"),
     from_column: Optional[str] = typer.Option(None, "--from-column", "-F", help="Column to apply a regex pattern to"),
     pattern: Optional[str] = typer.Option(None, "--pattern", "-p", help="Regex pattern; first capture group used, else full match"),
     extract_iban_from: Optional[str] = typer.Option(None, "--extract-iban-from", "-e", help="Column to auto-detect a single IBAN from"),
 ) -> None:
     """Set a mapping field in a bank config.
+
+    Allowed fields:
+      required: date, amount
+      optional: description, time, iban, counterparty
 
     Examples:\n
       expense config bank-set mybank --field iban --column IBAN\n
@@ -314,6 +329,11 @@ def config_bank_set(
     if not path.exists():
         typer.echo(f"No bank config found at {path}", err=True)
         typer.echo(f"Run: expense config bank new {bank}", err=True)
+        raise typer.Exit(1)
+
+    if field not in _ALLOWED_BANK_MAPPING_FIELDS:
+        allowed = ", ".join(_ALLOWED_BANK_MAPPING_FIELDS)
+        typer.echo(f"--field must be one of: {allowed}", err=True)
         raise typer.Exit(1)
 
     if not column and not extract_iban_from and not (from_column and pattern):
@@ -353,6 +373,24 @@ def config_bank_set(
     write_bank_config(path, config)
     typer.echo(f"Updated {bank}: mapping.{field}")
     typer.echo(f"Run: expense config bank {bank}  to verify")
+
+
+def _load_valid_bank_config(bank: str) -> dict:
+    from expense_cli.importer import load_bank_config
+
+    try:
+        config = load_bank_config(bank)
+    except FileNotFoundError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1)
+
+    config_errors = _validate_bank_config(config)
+    if config_errors:
+        typer.echo("Bank config is invalid:", err=True)
+        for err in config_errors:
+            typer.echo(f"  - {err}", err=True)
+        raise typer.Exit(1)
+    return config
 
 
 @counterparties_app.callback(invoke_without_command=True)
@@ -909,15 +947,11 @@ def import_expenses(
       expense import january.xls --bank rabobank\n
       expense import export.csv --bank mybank --force
     """
-    from expense_cli.importer import load_bank_config, read_bank_file
+    from expense_cli.importer import read_bank_file
     from expense_cli.identifier import load_counterparties, identify
     from expense_cli.categorizer import load_rules, categorize
 
-    try:
-        config = load_bank_config(bank)
-    except FileNotFoundError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1)
+    config = _load_valid_bank_config(bank)
 
     try:
         incoming = read_bank_file(filepath, config)
@@ -1025,6 +1059,7 @@ def import_expenses(
         table.add_column("", style="dim")
         table.add_column("ID", style="dim")
         table.add_column("Date")
+        table.add_column("Time", style="dim")
         table.add_column("Amount", justify="right")
         table.add_column("Description")
         table.add_column("Counterparty")
@@ -1080,12 +1115,103 @@ def import_expenses(
                     source,
                     str(member.get("id", "")),
                     str(member.get("date", "")),
+                    str(member.get("time", "")),
                     str(member.get("amount", "")),
                     str(member.get("description", "")),
                     str(member.get("counterparty", "")),
                     str(member.get("iban", "")),
                 )
         console.print(table)
+
+
+@app.command()
+def reimport(
+    filepath: str = typer.Argument(..., help="Path to the original bank export file"),
+    bank: str = typer.Option(..., "--bank", "-b", help="Bank name matching a config in ~/.expense_cli/banks/<name>.toml"),
+    field: str = typer.Option(..., "--field", "-f", help="Empty stored field to backfill. Allowed: time"),
+) -> None:
+    """Re-read a bank export and fill a selected field only where stored values are empty."""
+    if field not in _REIMPORTABLE_FIELDS:
+        allowed = ", ".join(_REIMPORTABLE_FIELDS)
+        typer.echo(f"--field must be one of: {allowed}", err=True)
+        raise typer.Exit(1)
+
+    from expense_cli.importer import read_bank_file
+
+    config = _load_valid_bank_config(bank)
+
+    try:
+        incoming = read_bank_file(filepath, config)
+    except Exception as e:
+        typer.echo(f"Failed to parse file: {e}", err=True)
+        raise typer.Exit(1)
+
+    existing = read_expenses()
+    existing_by_hash = {e.get("source_hash", ""): e for e in existing if e.get("source_hash")}
+    legacy_missing_hash = [e for e in existing if not e.get("source_hash") and not e.get(field, "").strip()]
+
+    matched = 0
+    updated = 0
+    skipped_has_value = 0
+    skipped_no_match = 0
+    updates: list[tuple[dict, str, str]] = []
+
+    for row in incoming:
+        source_hash = row.get("source_hash", "")
+        existing_row = existing_by_hash.get(source_hash)
+        if not existing_row:
+            skipped_no_match += 1
+            continue
+
+        matched += 1
+        current_value = str(existing_row.get(field, "")).strip()
+        new_value = str(row.get(field, "")).strip()
+
+        if current_value:
+            skipped_has_value += 1
+            continue
+        if not new_value:
+            continue
+
+        update_expense(int(existing_row["id"]), {field: new_value})
+        updates.append((existing_row, current_value, new_value))
+        updated += 1
+
+    if updates:
+        table = Table(title=f"Updated {updated} expense(s) from [bold]{filepath}[/bold]", show_lines=True)
+        table.add_column("ID", style="dim")
+        table.add_column("Date")
+        table.add_column("Amount", justify="right")
+        table.add_column("Description")
+        table.add_column("Old", style="dim")
+        table.add_column("New", style="green")
+        for expense, old_value, new_value in updates:
+            table.add_row(
+                str(expense.get("id", "")),
+                str(expense.get("date", "")),
+                str(expense.get("amount", "")),
+                str(expense.get("description", "")),
+                old_value or "—",
+                new_value,
+            )
+        console.print(table)
+    else:
+        typer.echo("Nothing to update.")
+
+    console.print(
+        "  "
+        + " · ".join(
+            [
+                f"{len(incoming)} row(s) read",
+                f"{matched} matched",
+                f"[green]{updated} updated[/green]" if updated else "[dim]0 updated[/dim]",
+                f"{skipped_has_value} already had a value" if skipped_has_value else "[dim]0 already had a value[/dim]",
+                f"{skipped_no_match} no source_hash match" if skipped_no_match else "[dim]0 no source_hash match[/dim]",
+                f"{len(legacy_missing_hash)} legacy row(s) without source_hash" if legacy_missing_hash else "[dim]0 legacy rows without source_hash[/dim]",
+            ]
+        ),
+        highlight=False,
+    )
 
 
 @app.command()
@@ -1119,6 +1245,7 @@ def duplicates(
         )
         table.add_column("ID", style="dim")
         table.add_column("Date")
+        table.add_column("Time", style="dim")
         table.add_column("Amount", justify="right")
         table.add_column("Description")
         table.add_column("Counterparty")
@@ -1127,6 +1254,7 @@ def duplicates(
             table.add_row(
                 str(member.get("id", "")),
                 str(member.get("date", "")),
+                str(member.get("time", "")),
                 str(member.get("amount", "")),
                 str(member.get("description", "")),
                 str(member.get("counterparty", "")),
