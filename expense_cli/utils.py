@@ -46,7 +46,8 @@ def compute_ratio(
     """Return abs(sum_numerator) / abs(sum_denominator), or None if denominator is 0.
 
     Both sides use prefix category matching so e.g. 'investeren' matches 'investeren/etf'.
-    Absolute values are used so direction (in/out) doesn't matter.
+    Signed amounts are summed first so opposing transactions within a month cancel out.
+    The aggregate numerator and denominator are then compared by absolute value.
     Expenses whose category matches any entry in *exclude* are dropped before both sums.
     """
     exclude = exclude or []
@@ -55,13 +56,13 @@ def compute_ratio(
         if not any(_category_matches(e.get("category", ""), x) for x in exclude)
     ]
     num = sum(
-        abs(float(e["amount"]))
+        float(e["amount"])
         for e in eligible
         if any(_category_matches(e.get("category", ""), c) for c in num_cats)
     )
     den = sum(
-        abs(float(e["amount"]))
+        float(e["amount"])
         for e in eligible
         if any(_category_matches(e.get("category", ""), c) for c in den_cats)
     )
-    return num / den if den else None
+    return abs(num) / abs(den) if den else None

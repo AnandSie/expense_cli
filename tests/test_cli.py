@@ -1985,13 +1985,24 @@ def test_ratios_multiple_numerators(tmp_storage):
 
 
 def test_ratios_direction_independent(tmp_storage):
-    # Both expenses use positive amounts; abs() must not change the ratio
+    # When each side has a consistent sign, the displayed ratio stays positive.
     runner.invoke(app, ["add", "1000.00", "salary", "--category", "salaris", "--date", "2025-11-15"])
     runner.invoke(app, ["add", "200.00", "invest", "--category", "investeren", "--date", "2025-11-20"])
     result = runner.invoke(app, ["ratios", "--numerator", "investeren", "--denominator", "salaris",
                                  "--from", "2025-11-01", "--to", "2025-11-30"])
     assert result.exit_code == 0
     assert "20.0%" in result.output
+
+
+def test_ratios_sum_signed_amounts_before_abs(tmp_storage):
+    runner.invoke(app, ["add", "1000.00", "salary", "--category", "salaris", "--date", "2025-12-15"])
+    runner.invoke(app, ["add", "--category", "investeren", "--date", "2025-12-20", "--", "-420.00", "invest out"])
+    runner.invoke(app, ["add", "250.00", "invest refund", "--category", "investeren/crypto", "--date", "2025-12-21"])
+    runner.invoke(app, ["add", "--category", "investeren/fonds", "--date", "2025-12-22", "--", "-40.00", "funds fee"])
+    result = runner.invoke(app, ["ratios", "--numerator", "investeren", "--denominator", "salaris",
+                                 "--from", "2025-12-01", "--to", "2025-12-31"])
+    assert result.exit_code == 0
+    assert "21.0%" in result.output
 
 
 def test_ratios_label_displayed(tmp_storage):
