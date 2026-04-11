@@ -9,6 +9,7 @@ from rich.syntax import Syntax
 from rich.table import Table
 
 from expense_cli import __version__
+from expense_cli.duplicates import format_match_key, group_possible_duplicates, resolve_match_fields
 from expense_cli.storage import read_expenses, write_expense, write_expenses_batch, next_id, update_expense, delete_expense, reset_expenses, _weekday_from_date
 from expense_cli.utils import _sparkline, _category_parent, _category_matches, _month_range, compute_ratio
 
@@ -899,6 +900,7 @@ def import_expenses(
     filepath: str = typer.Argument(..., help="Path to the bank CSV file"),
     bank: str = typer.Option(..., "--bank", "-b", help="Bank name matching a config in ~/.expense_cli/banks/<name>.toml"),
     force: bool = typer.Option(False, "--force", "-F", help="Import all rows, skipping duplicate detection"),
+    match_field: list[str] = typer.Option([], "--match-field", help="Fields to use for possible duplicate detection (comma-separated)"),
 ) -> None:
     """Import expenses from a bank statement file (CSV, TAB, or XLS).
 
@@ -921,6 +923,12 @@ def import_expenses(
         incoming = read_bank_file(filepath, config)
     except Exception as e:
         typer.echo(f"Failed to parse file: {e}", err=True)
+        raise typer.Exit(1)
+
+    try:
+        match_fields = resolve_match_fields(match_field)
+    except ValueError as e:
+        typer.echo(str(e), err=True)
         raise typer.Exit(1)
 
     existing = read_expenses()
@@ -970,6 +978,12 @@ def import_expenses(
 
     if to_import:
         write_expenses_batch(to_import)
+
+    possible_duplicate_groups = [
+        (key, members)
+        for key, members in group_possible_duplicates(existing + to_import, match_fields)
+        if any(row in to_import for row in members)
+    ]
 
     # --- Imported rows table ---
     if to_import:
@@ -1039,6 +1053,84 @@ def import_expenses(
                 str(incoming_row.get("iban", "")),
                 "",
                 "",
+            )
+        console.print(table)
+
+    if possible_duplicate_groups:
+        fields_str = ", ".join(match_fields)
+        table = Table(
+            title=f"Possible duplicates ({fields_str})",
+            show_lines=True,
+        )
+        table.add_column("Match", style="dim")
+        table.add_column("Source", style="dim")
+        table.add_column("ID", style="dim")
+        table.add_column("Date")
+        table.add_column("Amount", justify="right")
+        table.add_column("Description")
+        table.add_column("Counterparty")
+        table.add_column("IBAN", style="dim")
+        for key, members in possible_duplicate_groups:
+            label = format_match_key(match_fields, key)
+            imported_ids = {row.get("id") for row in to_import}
+            for idx, member in enumerate(members):
+                source = "imported" if member.get("id") in imported_ids else "existing"
+                table.add_row(
+                    label if idx == 0 else "",
+                    source,
+                    str(member.get("id", "")),
+                    str(member.get("date", "")),
+                    str(member.get("amount", "")),
+                    str(member.get("description", "")),
+                    str(member.get("counterparty", "")),
+                    str(member.get("iban", "")),
+                )
+        console.print(table)
+
+
+@app.command()
+def duplicates(
+    from_date: Optional[str] = typer.Option(None, "--from", "-f", help="Start date YYYY-MM-DD"),
+    to_date: Optional[str] = typer.Option(None, "--to", "-t", help="End date YYYY-MM-DD"),
+    match_field: list[str] = typer.Option([], "--match-field", help="Fields to use for duplicate detection (comma-separated)"),
+) -> None:
+    """Show possible duplicate transactions based on selected fields."""
+    try:
+        match_fields = resolve_match_fields(match_field)
+    except ValueError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1)
+
+    expenses = read_expenses()
+    if from_date:
+        expenses = [e for e in expenses if e["date"] >= from_date]
+    if to_date:
+        expenses = [e for e in expenses if e["date"] <= to_date]
+
+    duplicate_groups = group_possible_duplicates(expenses, match_fields)
+    if not duplicate_groups:
+        typer.echo("No possible duplicates found.")
+        return
+
+    for idx, (key, members) in enumerate(duplicate_groups, start=1):
+        table = Table(
+            title=f"Possible duplicate group {idx} ({format_match_key(match_fields, key)})",
+            show_lines=True,
+        )
+        table.add_column("ID", style="dim")
+        table.add_column("Date")
+        table.add_column("Amount", justify="right")
+        table.add_column("Description")
+        table.add_column("Counterparty")
+        table.add_column("IBAN", style="dim")
+        for member in members:
+            table.add_row(
+                str(member.get("id", "")),
+                str(member.get("date", "")),
+                str(member.get("amount", "")),
+                str(member.get("description", "")),
+                str(member.get("counterparty", "")),
+                str(member.get("iban", "")),
             )
         console.print(table)
 

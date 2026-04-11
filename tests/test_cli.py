@@ -1112,6 +1112,35 @@ def _write_csv(path, rows):
             w.writerow(row)
 
 
+def _write_expense_fixture(
+    expense_id: str,
+    *,
+    date: str,
+    amount: str,
+    description: str = "",
+    iban: str = "",
+    counterparty: str = "",
+    category: str = "",
+):
+    from expense_cli.storage import write_expense
+    direction = "out" if float(amount) < 0 else "in"
+    write_expense({
+        "id": expense_id,
+        "date": date,
+        "weekday": "",
+        "time": "",
+        "amount": amount,
+        "direction": direction,
+        "description": description,
+        "iban": iban,
+        "counterparty": counterparty,
+        "category": category,
+        "note": "",
+        "source_hash": "",
+        "split_id": "",
+    })
+
+
 def test_import_basic(tmp_storage):
     _write_bank_config(tmp_storage)
     csv_file = tmp_storage / "statement.csv"
@@ -1167,6 +1196,113 @@ def test_import_same_key_different_raw_not_deduplicated(tmp_storage):
     result = runner.invoke(app, ["import", str(csv_file), "--bank", "test_bank"])
     assert result.exit_code == 0
     assert len(read_expenses()) == 2
+
+
+def test_import_reports_possible_duplicates_with_default_match_fields(tmp_storage):
+    _write_bank_config(tmp_storage)
+    runner.invoke(app, ["add", "42.50", "Old desc", "--date", "2026-01-01"])
+    csv_file = tmp_storage / "statement.csv"
+    _write_csv(csv_file, [
+        {"Date": "2026-01-01", "Amount": "42.50", "Description": "New desc",
+         "IBAN": "", "Counterparty": ""},
+    ])
+    result = runner.invoke(app, ["import", str(csv_file), "--bank", "test_bank"])
+    assert result.exit_code == 0
+    assert "Possible duplicates (date, amount)" in result.output
+    assert "Old desc" in result.output
+    assert "New desc" in result.output
+    assert len(read_expenses()) == 2
+
+
+def test_import_possible_duplicates_respect_custom_match_fields(tmp_storage):
+    _write_bank_config(tmp_storage)
+    runner.invoke(app, ["add", "42.50", "Old desc", "--date", "2026-01-01", "--iban", "NL01"])
+    csv_file = tmp_storage / "statement.csv"
+    _write_csv(csv_file, [
+        {"Date": "2026-01-01", "Amount": "42.50", "Description": "New desc",
+         "IBAN": "NL02", "Counterparty": ""},
+    ])
+    result = runner.invoke(app, ["import", str(csv_file), "--bank", "test_bank",
+                                 "--match-field", "date,amount,iban"])
+    assert result.exit_code == 0
+    assert "Possible duplicates" not in result.output
+
+
+def test_import_possible_duplicates_can_match_rows_imported_in_same_run(tmp_storage):
+    _write_bank_config(tmp_storage)
+    csv_file = tmp_storage / "statement.csv"
+    _write_csv(csv_file, [
+        {"Date": "2026-01-01", "Amount": "42.50", "Description": "First",
+         "IBAN": "", "Counterparty": ""},
+        {"Date": "2026-01-01", "Amount": "42.50", "Description": "Second",
+         "IBAN": "", "Counterparty": ""},
+    ])
+    result = runner.invoke(app, ["import", str(csv_file), "--bank", "test_bank"])
+    assert result.exit_code == 0
+    assert "Possible duplicates (date, amount)" in result.output
+    assert "First" in result.output
+    assert "Second" in result.output
+
+
+def test_import_force_still_reports_possible_duplicates(tmp_storage):
+    _write_bank_config(tmp_storage)
+    csv_file = tmp_storage / "statement.csv"
+    _write_csv(csv_file, [
+        {"Date": "2026-01-01", "Amount": "42.50", "Description": "Groceries",
+         "IBAN": "NL91ABNA0417164300", "Counterparty": "Albert Heijn"},
+    ])
+    runner.invoke(app, ["import", str(csv_file), "--bank", "test_bank"])
+    result = runner.invoke(app, ["import", str(csv_file), "--bank", "test_bank", "--force"])
+    assert result.exit_code == 0
+    assert "Possible duplicates (date, amount)" in result.output
+    assert len(read_expenses()) == 2
+
+
+# --- CLI: duplicates ---
+
+
+def test_duplicates_finds_default_date_amount_matches(tmp_storage):
+    _write_expense_fixture("1", date="2026-01-01", amount="42.50", description="A")
+    _write_expense_fixture("2", date="2026-01-01", amount="42.50", description="B")
+    result = runner.invoke(app, ["duplicates"])
+    assert result.exit_code == 0
+    assert "Possible duplicate group 1" in result.output
+    assert "A" in result.output
+    assert "B" in result.output
+
+
+def test_duplicates_match_field_iban_narrows_results(tmp_storage):
+    _write_expense_fixture("1", date="2026-01-01", amount="42.50", description="A", iban="NL01")
+    _write_expense_fixture("2", date="2026-01-01", amount="42.50", description="B", iban="NL02")
+    result = runner.invoke(app, ["duplicates", "--match-field", "date,amount,iban"])
+    assert result.exit_code == 0
+    assert "No possible duplicates found." in result.output
+
+
+def test_duplicates_description_field_can_distinguish_rows(tmp_storage):
+    _write_expense_fixture("1", date="2026-01-01", amount="42.50", description="A")
+    _write_expense_fixture("2", date="2026-01-01", amount="42.50", description="B")
+    result = runner.invoke(app, ["duplicates", "--match-field", "date,amount,description"])
+    assert result.exit_code == 0
+    assert "No possible duplicates found." in result.output
+
+
+def test_duplicates_honors_from_to(tmp_storage):
+    _write_expense_fixture("1", date="2026-01-01", amount="42.50", description="Old A")
+    _write_expense_fixture("2", date="2026-01-01", amount="42.50", description="Old B")
+    _write_expense_fixture("3", date="2026-02-01", amount="42.50", description="New A")
+    _write_expense_fixture("4", date="2026-02-01", amount="42.50", description="New B")
+    result = runner.invoke(app, ["duplicates", "--from", "2026-02-01", "--to", "2026-02-28"])
+    assert result.exit_code == 0
+    assert "New A" in result.output
+    assert "New B" in result.output
+    assert "Old A" not in result.output
+
+
+def test_duplicates_invalid_match_field_errors(tmp_storage):
+    result = runner.invoke(app, ["duplicates", "--match-field", "weekday"])
+    assert result.exit_code == 1
+    assert "Invalid --match-field value" in result.output
 
 
 # --- CLI: split ---
