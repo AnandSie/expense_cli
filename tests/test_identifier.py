@@ -10,6 +10,7 @@ from expense_cli.identifier import (
     load_counterparties,
     remove_category,
     clear_categories,
+    set_manual_category,
 )
 
 # ---------------------------------------------------------------------------
@@ -478,3 +479,54 @@ def test_matcher_exists_iban_presence_check(tmp_storage):
     save_counterparty_rule("landlord", "iban", "NL01OLD")
     assert matcher_exists("landlord", "iban") is True
     assert matcher_exists("landlord", "description_contains") is False
+
+
+# ---------------------------------------------------------------------------
+# set_manual_category
+# ---------------------------------------------------------------------------
+
+def test_set_manual_creates_new_entry(tmp_storage):
+    set_manual_category("albert heijn")
+    entries = load_counterparties()
+    assert len(entries) == 1
+    assert entries[0]["name"] == "albert heijn"
+    assert entries[0]["manual_category"] is True
+
+
+def test_set_manual_updates_existing_preserves_matchers(tmp_storage):
+    save_counterparty_rule("albert heijn", "description_contains", "heijn")
+    set_manual_category("albert heijn")
+    entries = load_counterparties()
+    assert len(entries) == 1
+    assert entries[0]["description_contains"] == "heijn"
+    assert entries[0]["manual_category"] is True
+
+
+def test_set_manual_with_existing_category(tmp_storage):
+    save_counterparty_rule("albert heijn", category="groceries")
+    set_manual_category("albert heijn")
+    entries = load_counterparties()
+    assert entries[0]["category"] == "groceries"
+    assert entries[0]["manual_category"] is True
+
+
+def test_set_manual_idempotent(tmp_storage):
+    set_manual_category("albert heijn")
+    set_manual_category("albert heijn")
+    assert len(load_counterparties()) == 1
+
+
+def test_set_manual_case_insensitive(tmp_storage):
+    save_counterparty_rule("albert heijn", "description_contains", "heijn")
+    set_manual_category("Albert Heijn")
+    entries = load_counterparties()
+    assert len(entries) == 1
+    assert entries[0]["manual_category"] is True
+
+
+def test_set_manual_written_as_lowercase_true(tmp_storage):
+    set_manual_category("albert heijn")
+    from expense_cli.identifier import COUNTERPARTIES_PATH
+    content = COUNTERPARTIES_PATH.read_text(encoding="utf-8")
+    assert "manual_category = true" in content
+    assert "True" not in content

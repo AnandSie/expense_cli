@@ -1040,7 +1040,7 @@ def test_review_interactive_back_goes_to_previous(tmp_storage, monkeypatch):
 
     monkeypatch.setattr("expense_cli.cli._pick", fake_pick)
     monkeypatch.setattr("expense_cli.cli._input_prefilled", lambda *a, **kw: "")
-    monkeypatch.setattr("typer.confirm", lambda *a, **kw: False)
+    monkeypatch.setattr("expense_cli.cli._prompt_ynbang", lambda *a, **kw: "n")
     runner.invoke(app, ["review"])
 
     from expense_cli.storage import read_expenses
@@ -1067,13 +1067,77 @@ def test_review_interactive_back_at_first_expense_redoes_it(tmp_storage, monkeyp
 
     monkeypatch.setattr("expense_cli.cli._pick", fake_pick)
     monkeypatch.setattr("expense_cli.cli._input_prefilled", lambda *a, **kw: "")
-    monkeypatch.setattr("typer.confirm", lambda *a, **kw: False)
+    monkeypatch.setattr("expense_cli.cli._prompt_ynbang", lambda *a, **kw: "n")
     runner.invoke(app, ["review"])
 
     from expense_cli.storage import read_expenses
     expenses = read_expenses()
     assert expenses[0]["counterparty"] == "alice"
     assert expenses[0]["category"] == "food"
+
+
+# ---------------------------------------------------------------------------
+# Category rule prompt: y / n / ! (manual flag)
+# ---------------------------------------------------------------------------
+
+def test_review_category_rule_prompt_y_saves_rule(tmp_storage, monkeypatch):
+    """Choosing [y] at the category rule prompt saves the rule."""
+    runner.invoke(app, ["add", "5.00", "Coffee"])
+    monkeypatch.setattr("expense_cli.cli._pick", lambda *a, **kw: "bob" if "Counterparty" in str(a) else "food")
+    monkeypatch.setattr("expense_cli.cli._input_prefilled", lambda *a, **kw: "")
+    monkeypatch.setattr("expense_cli.cli._prompt_ynbang", lambda *a, **kw: "y")
+    runner.invoke(app, ["review"])
+    from expense_cli.categorizer import category_rule_exists
+    assert category_rule_exists("bob") is True
+
+
+def test_review_category_rule_prompt_n_saves_nothing(tmp_storage, monkeypatch):
+    """Choosing [n] at the category rule prompt saves no rule."""
+    runner.invoke(app, ["add", "5.00", "Coffee"])
+    monkeypatch.setattr("expense_cli.cli._pick", lambda *a, **kw: "bob" if "Counterparty" in str(a) else "food")
+    monkeypatch.setattr("expense_cli.cli._input_prefilled", lambda *a, **kw: "")
+    monkeypatch.setattr("expense_cli.cli._prompt_ynbang", lambda *a, **kw: "n")
+    runner.invoke(app, ["review"])
+    from expense_cli.categorizer import category_rule_exists
+    assert category_rule_exists("bob") is False
+
+
+def test_review_category_rule_prompt_bang_sets_manual_flag(tmp_storage, monkeypatch):
+    """Choosing [!] at the category rule prompt marks the counterparty as manual."""
+    runner.invoke(app, ["add", "5.00", "Coffee"])
+    monkeypatch.setattr("expense_cli.cli._pick", lambda *a, **kw: "bob" if "Counterparty" in str(a) else "food")
+    monkeypatch.setattr("expense_cli.cli._input_prefilled", lambda *a, **kw: "")
+    monkeypatch.setattr("expense_cli.cli._prompt_ynbang", lambda *a, **kw: "!")
+    runner.invoke(app, ["review"])
+    from expense_cli.categorizer import category_rule_exists, is_manual_category
+    assert category_rule_exists("bob") is False
+    assert is_manual_category("bob") is True
+
+
+def test_review_category_rule_prompt_skipped_when_manual_flag(tmp_storage, monkeypatch):
+    """No category rule prompt shown when counterparty already has manual_category = true."""
+    from expense_cli.categorizer import set_manual_category
+    set_manual_category("bob")
+    runner.invoke(app, ["add", "5.00", "Coffee"])
+    prompt_calls: list = []
+    monkeypatch.setattr("expense_cli.cli._pick", lambda *a, **kw: "bob" if "Counterparty" in str(a) else "food")
+    monkeypatch.setattr("expense_cli.cli._input_prefilled", lambda *a, **kw: "")
+    monkeypatch.setattr("expense_cli.cli._prompt_ynbang", lambda *a, **kw: prompt_calls.append(1) or "n")
+    runner.invoke(app, ["review"])
+    assert prompt_calls == []
+
+
+def test_review_category_rule_prompt_skipped_when_rule_exists(tmp_storage, monkeypatch):
+    """No category rule prompt shown when a rule for the counterparty already exists."""
+    from expense_cli.categorizer import save_category_rule
+    save_category_rule("bob", "food")
+    runner.invoke(app, ["add", "5.00", "Coffee"])
+    prompt_calls: list = []
+    monkeypatch.setattr("expense_cli.cli._pick", lambda *a, **kw: "bob" if "Counterparty" in str(a) else "food")
+    monkeypatch.setattr("expense_cli.cli._input_prefilled", lambda *a, **kw: "")
+    monkeypatch.setattr("expense_cli.cli._prompt_ynbang", lambda *a, **kw: prompt_calls.append(1) or "n")
+    runner.invoke(app, ["review"])
+    assert prompt_calls == []
 
 
 def test_review_note_step_sets_note(tmp_storage, monkeypatch):

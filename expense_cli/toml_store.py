@@ -82,6 +82,8 @@ def write_bank_config(path: Path, config: dict) -> None:
 
 
 def _fmt(key: str, value: object) -> str:
+    if isinstance(value, bool):
+        return f"{key} = {'true' if value else 'false'}"
     if isinstance(value, str):
         escaped = value.replace("\\", "\\\\").replace('"', '\\"')
         return f'{key} = "{escaped}"'

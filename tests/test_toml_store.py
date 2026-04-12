@@ -99,6 +99,32 @@ def test_write_toml_array_no_sort_key_preserves_order(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# _fmt boolean serialization
+# ---------------------------------------------------------------------------
+
+def test_fmt_writes_bool_true_as_lowercase_true(tmp_path):
+    path = tmp_path / "out.toml"
+    write_toml_array(path, "counterparty", [{"name": "x", "manual_category": True}])
+    result = read_toml(path)
+    assert result["counterparty"][0]["manual_category"] is True
+
+
+def test_fmt_writes_bool_false_as_lowercase_false(tmp_path):
+    path = tmp_path / "out.toml"
+    write_toml_array(path, "counterparty", [{"name": "x", "manual_category": False}])
+    result = read_toml(path)
+    assert result["counterparty"][0]["manual_category"] is False
+
+
+def test_fmt_bool_written_as_lowercase_literal(tmp_path):
+    path = tmp_path / "out.toml"
+    write_toml_array(path, "counterparty", [{"name": "x", "manual_category": True}])
+    content = path.read_text(encoding="utf-8")
+    assert "manual_category = true" in content
+    assert "True" not in content
+
+
+# ---------------------------------------------------------------------------
 # write_bank_config
 # ---------------------------------------------------------------------------
 

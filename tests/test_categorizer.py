@@ -7,6 +7,8 @@ from expense_cli.categorizer import (
     delete_category_rule,
     clear_category_rules,
     load_rules,
+    is_manual_category,
+    set_manual_category,
 )
 
 # ---------------------------------------------------------------------------
@@ -222,3 +224,37 @@ def test_clear_keeps_entries_that_have_matchers(tmp_storage):
     entries = load_counterparties()
     assert len(entries) == 1
     assert "category" not in entries[0]
+
+
+# ---------------------------------------------------------------------------
+# is_manual_category
+# ---------------------------------------------------------------------------
+
+def test_is_manual_false_empty_store(tmp_storage):
+    assert is_manual_category("albert heijn") is False
+
+
+def test_is_manual_false_without_flag(tmp_storage):
+    save_category_rule("albert heijn", "groceries")
+    assert is_manual_category("albert heijn") is False
+
+
+def test_is_manual_false_with_matcher_only(tmp_storage):
+    from expense_cli.identifier import save_counterparty_rule
+    save_counterparty_rule("albert heijn", "description_contains", "heijn")
+    assert is_manual_category("albert heijn") is False
+
+
+def test_is_manual_true_after_set(tmp_storage):
+    set_manual_category("albert heijn")
+    assert is_manual_category("albert heijn") is True
+
+
+def test_is_manual_case_insensitive(tmp_storage):
+    set_manual_category("albert heijn")
+    assert is_manual_category("Albert Heijn") is True
+
+
+def test_is_manual_false_for_different_counterparty(tmp_storage):
+    set_manual_category("albert heijn")
+    assert is_manual_category("jumbo") is False

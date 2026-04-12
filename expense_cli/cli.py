@@ -904,8 +904,7 @@ def list_expenses(
         table.add_column("IBAN", style="dim", overflow="fold")
     table.add_column("Counterparty")
     table.add_column("Category")
-    if wide:
-        table.add_column("Note", overflow="fold", style="dim")
+    table.add_column("Note", overflow="fold", style="dim")
 
     _all_expenses = read_expenses()
     _split_parent_ids_list = {e["split_id"] for e in _all_expenses if e.get("split_id")}
@@ -925,9 +924,7 @@ def list_expenses(
         row.append(amt_str)
         if wide:
             row += [e.get("description", ""), e.get("iban", "")]
-        row += [e.get("counterparty", ""), e["category"]]
-        if wide:
-            row.append(e.get("note", ""))
+        row += [e.get("counterparty", ""), e["category"], e.get("note", "")]
         table.add_row(*row)
 
     console.print(table)
@@ -1315,6 +1312,29 @@ _HINT = "  \033[2mtype to filter  ·  ↑↓ more options  ·  1-9 pick  ·  ^Z 
 _EDIT_HINT = "  \033[2m← → ↑ ↓ move  ·  backspace  ·  ^U clear  ·  ^Z back  ·  Enter save  ·  empty skip  ·  ^S skip tx  ·  ^Q quit\033[0m"
 
 
+def _prompt_ynbang(message: str) -> str:
+    """Show *message* and read a single keypress: 'y', 'n', or '!'.
+
+    Returns the chosen key as a lowercase string. In non-TTY mode (tests, pipes)
+    falls back to reading a line from stdin (default 'n' for empty/invalid input).
+    """
+    import sys as _sys_yn
+    if not _sys_yn.stdin.isatty():
+        line = _sys_yn.stdin.readline().strip().lower()
+        return line[0] if line and line[0] in ("y", "n", "!") else "n"
+    _sys_yn.stdout.write(message)
+    _sys_yn.stdout.flush()
+    while True:
+        ch = _getch()
+        if ch is None:
+            continue
+        ch_lower = ch.lower()
+        if ch_lower in ("y", "n", "!"):
+            _sys_yn.stdout.write(f"{ch_lower}\n")
+            _sys_yn.stdout.flush()
+            return ch_lower
+
+
 def _input_prefilled(prompt_text: str, default: str, color: str = "") -> str | object | None:
     """Show prompt with default text pre-filled and fully editable.
 
@@ -1671,7 +1691,7 @@ def review(
       expense review --uncategorized --month 3
     """
     from expense_cli.identifier import load_counterparties, rule_exists, save_counterparty_rule
-    from expense_cli.categorizer import load_rules, categorize, category_rule_exists, save_category_rule
+    from expense_cli.categorizer import load_rules, categorize, category_rule_exists, save_category_rule, is_manual_category, set_manual_category
 
     expenses = read_expenses()
 
@@ -1765,6 +1785,8 @@ def review(
         console.print(row("date",         f"[cyan]{expense['date']}[/cyan]",       "dim cyan"))
         if expense.get("weekday"):
             console.print(row("weekday",   f"[dim]{expense['weekday']}[/dim]"))
+        if expense.get("time"):
+            console.print(row("time",      f"[dim]{expense['time'][:5]}[/dim]"))
         amount_color = "green" if float(expense["amount"]) >= 0 else "red"
         console.print(row("amount", f"[{amount_color}]{expense['amount']}[/{amount_color}]", f"dim {amount_color}"))
         if expense.get("iban"):
@@ -1897,10 +1919,18 @@ def review(
             # Offer to save category as a rule
             cat = fields.get("category")
             final_cp = fields.get("counterparty") or expense.get("counterparty", "")
-            if cat and final_cp and not category_rule_exists(final_cp):
-                if typer.confirm(f"  \033[33mSave category rule '{final_cp}' → '{cat}'?\033[0m", default=False):
+            if cat and final_cp and not category_rule_exists(final_cp) and not is_manual_category(final_cp):
+                prompt_msg = (
+                    f"  \033[33mSave category rule '{final_cp}' → '{cat}'? "
+                    f"[y] yes  [n] no  [!] never ask again\033[0m  "
+                )
+                choice = _prompt_ynbang(prompt_msg)
+                if choice == "y":
                     save_category_rule(final_cp, cat)
                     console.print(f"  [yellow]✓ category rule saved[/yellow]")
+                elif choice == "!":
+                    set_manual_category(final_cp)
+                    console.print(f"  [yellow]✓ '{final_cp}' marked as manual — won't ask again[/yellow]")
         else:
             console.print(f"  [dim]skipped[/dim]")
 
@@ -1946,8 +1976,109 @@ def edit(
         fields["note"] = note[:NOTE_MAX_LEN]
 
     if not fields:
-        typer.echo("Provide at least one of --iban, --counterparty, --category, --note.", err=True)
-        raise typer.Exit(1)
+        if not _sys.stdin.isatty():
+            typer.echo("Provide at least one of --iban, --counterparty, --category, --note.", err=True)
+            raise typer.Exit(1)
+        # Interactive mode: step through each expense with _pick() for counterparty and category
+        from collections import Counter as _Counter
+        from expense_cli.identifier import load_counterparties as _load_counterparties
+        from expense_cli.categorizer import load_rules as _load_rules
+        all_expenses = read_expenses()
+
+        cp_counts = _Counter(e["counterparty"] for e in all_expenses if e.get("counterparty"))
+        known_counterparties = [name for name, _ in cp_counts.most_common()]
+        for cp in _load_counterparties():
+            if cp["name"] not in known_counterparties:
+                known_counterparties.append(cp["name"])
+
+        rules = _load_rules()
+        cat_counts = _Counter(e["category"] for e in all_expenses if e.get("category"))
+        known_categories = [cat for cat, _ in cat_counts.most_common()]
+        for rule in rules:
+            if rule.get("category") and rule["category"] not in known_categories:
+                known_categories.append(rule["category"])
+        known_categories.sort(key=lambda c: (_category_parent(c), c))
+
+        expenses_by_id = {int(e["id"]): e for e in all_expenses}
+        not_found_interactive = [eid for eid in ids if eid not in expenses_by_id]
+        if not_found_interactive:
+            typer.echo(f"No expense(s) with ID: {', '.join(str(x) for x in not_found_interactive)}.", err=True)
+            if len(not_found_interactive) == len(ids):
+                raise typer.Exit(1)
+
+        def _row(key: str, value: str) -> str:
+            return f"  [dim]{key:<12}[/dim]  {value}"
+
+        i = 0
+        valid_ids = [eid for eid in ids if eid in expenses_by_id]
+        while i < len(valid_ids):
+            eid = valid_ids[i]
+            expense = expenses_by_id[eid]
+            console.print("")
+            console.rule(f"[bold cyan][{i + 1}/{len(valid_ids)}][/bold cyan]  [dim]#{eid}[/dim]")
+            console.print(_row("date", f"[cyan]{expense['date']}[/cyan]"), highlight=False)
+            amount_color = "green" if float(expense["amount"]) >= 0 else "red"
+            console.print(_row("amount", f"[{amount_color}]{expense['amount']}[/{amount_color}]"), highlight=False)
+            if expense.get("iban"):
+                console.print(_row("iban", f"[dim]{expense['iban']}[/dim]"), highlight=False)
+            if expense.get("counterparty"):
+                console.print(_row("counterparty", expense["counterparty"]), highlight=False)
+            if expense.get("category"):
+                console.print(_row("category", expense["category"]), highlight=False)
+            if expense.get("note"):
+                console.print(_row("note", expense["note"]), highlight=False)
+            console.print(_row("description", expense["description"]), highlight=False)
+
+            edit_fields: dict = {}
+
+            # Counterparty
+            cp_result = _pick("Counterparty", known_counterparties, "Known counterparties", color="\033[36m", initial=expense.get("counterparty", ""))
+            if cp_result is None:
+                break
+            if cp_result is _BACK:
+                if i > 0:
+                    i -= 1
+                continue
+            if cp_result is _SKIP:
+                i += 1
+                continue
+            if isinstance(cp_result, str) and cp_result != expense.get("counterparty", ""):
+                edit_fields["counterparty"] = cp_result
+                if cp_result and cp_result not in known_counterparties:
+                    known_counterparties.insert(0, cp_result)
+
+            # Category
+            cat_result = _pick("Category", known_categories, "Known categories", color="\033[33m", initial=expense.get("category", ""))
+            if cat_result is None:
+                break
+            if cat_result is _BACK:
+                continue  # re-prompt same expense (counterparty again)
+            if cat_result is _SKIP:
+                i += 1
+                continue
+            if isinstance(cat_result, str) and cat_result != expense.get("category", ""):
+                edit_fields["category"] = cat_result
+                if cat_result and cat_result not in known_categories:
+                    known_categories.append(cat_result)
+                    known_categories.sort(key=lambda c: (_category_parent(c), c))
+
+            if edit_fields:
+                update_expense(eid, edit_fields)
+                updated = next(e for e in read_expenses() if int(e["id"]) == eid)
+                console.print(f"Updated expense #{eid}:")
+                for key in ("date", "amount", "description", "iban", "counterparty", "category", "note"):
+                    value = updated[key]
+                    if key in edit_fields:
+                        console.print(f"  {key}: [green]{value}[/green]", highlight=False)
+                    else:
+                        console.print(f"  {key}: [dim]{value}[/dim]", highlight=False)
+            else:
+                console.print(f"[dim]No changes for #{eid}.[/dim]")
+
+            i += 1
+
+        console.print("")
+        return
 
     not_found = [eid for eid in ids if not update_expense(eid, fields)]
     if not_found:
@@ -2564,9 +2695,9 @@ def insights(
             return f"[{style}]{v:.2f}[/{style}]"
 
         pivot = Table(show_lines=False, box=None, padding=(0, 1), show_footer=True)
-        pivot.add_column(by.capitalize(), min_width=16, footer="[dim]Total[/dim]")
+        pivot.add_column(by.capitalize(), min_width=24, footer="[dim]Total[/dim]")
         for mo in show_months:
-            pivot.add_column(mo, justify="right", footer=_pivot_color(col_totals[mo], bold=False, dim=True))
+            pivot.add_column(mo, justify="right", min_width=9, footer=_pivot_color(col_totals[mo], bold=False, dim=True))
         pivot.add_column("Avg/mo", justify="right", footer=_pivot_color(avg_total, bold=False, dim=True))
         pivot.add_column("%", justify="right", footer="[dim]100%[/dim]")
 
@@ -2632,7 +2763,7 @@ def insights(
     show_sparkline = len(sparkline_months) >= 2
 
     table = Table(show_lines=False, box=None, padding=(0, 1), show_footer=True)
-    table.add_column(by.capitalize(), min_width=20, footer="[dim]Total[/dim]")
+    table.add_column(by.capitalize(), min_width=24, footer="[dim]Total[/dim]")
     table.add_column("Out", justify="right", style="red", footer=f"[dim]{total_out:.2f}[/dim]" if out_totals else "")
     table.add_column("In", justify="right", style="green", footer=f"[dim]{total_in:.2f}[/dim]" if in_totals else "")
     table.add_column("Net", justify="right", footer=f"[dim]{total_net:.2f}[/dim]")
@@ -2803,25 +2934,29 @@ def reapply() -> None:
 
 @app.command()
 def ratios(
-    numerator: list[str] = typer.Option(..., "--numerator", "-N", help="Category for the top of the fraction (can repeat to sum multiple)"),
-    denominator: list[str] = typer.Option(..., "--denominator", "-D", help="Category for the bottom of the fraction (can repeat to sum multiple)"),
-    label: Optional[str] = typer.Option(None, "--label", "-l", help="Display label for this ratio (default: auto-generated)"),
+    numerator: list[str] = typer.Option(..., "--numerator", "-N", help="Category for the numerator; comma-separate to sum multiple into one group (repeat for multiple rows with --split)"),
+    denominator: list[str] = typer.Option(..., "--denominator", "-D", help="Category for the denominator; comma-separate to sum multiple into one group (repeat for multiple rows with --split)"),
+    label: Optional[str] = typer.Option(None, "--label", "-l", help="Display label for this ratio (default: auto-generated; ignored with --split)"),
     from_date: Optional[str] = typer.Option(None, "--from", "-f", help="Start date YYYY-MM-DD"),
     to_date: Optional[str] = typer.Option(None, "--to", "-t", help="End date YYYY-MM-DD"),
     months: int = typer.Option(6, "--months", "-M", help="Number of recent months to show (default: 6)"),
     exclude: list[str] = typer.Option([], "--exclude", "-e", help="Category to exclude from both sides (can repeat)"),
+    split: bool = typer.Option(False, "--split", "-s", help="One row per --numerator group (or per --denominator group if only one --numerator given)"),
 ) -> None:
     """Show a monthly trend table for a ratio between two category groups.
 
     Computes abs(sum of numerator) / abs(sum of denominator) per month.
     Both sides use prefix category matching ('investeren' matches 'investeren/etf').
     Use --exclude to drop specific subcategories from both sides before computing.
-    Run repeatedly with different --numerator/--denominator to compare multiple ratios.
+    Use --split to produce one row per --numerator flag (or per --denominator flag).
+    Comma-separate categories within one flag to sum them into a single group.
 
     Examples:\n
       expense ratios --numerator investeren --denominator salaris\n
       expense ratios --numerator investeren --denominator salaris --exclude investeren/donation\n
-      expense ratios --numerator investeren --numerator pensioen --denominator salaris --months 12\n
+      expense ratios -N investeren -N doneren -D salaris --split\n
+      expense ratios -N investeren,pensioen -N doneren -D salaris --split\n
+      expense ratios -N investeren -D salaris -D rent --split\n
       expense ratios --numerator food --denominator salaris --label food_rate --from 2025-01-01
     """
     expenses = read_expenses()
@@ -2860,34 +2995,68 @@ def ratios(
         start_mo = f"{y:04d}-{m:02d}"
         show_months = _month_range(start_mo, end_mo)
 
-    row_label = label or f"{' + '.join(numerator)} / {' + '.join(denominator)}"
+    # Parse comma-separated groups within each flag value
+    num_groups: list[list[str]] = [[c.strip() for c in g.split(",")] for g in numerator]
+    den_groups: list[list[str]] = [[c.strip() for c in g.split(",")] for g in denominator]
 
-    # Compute ratio per month
-    values: list[float | None] = [
-        compute_ratio(monthly_buckets.get(mo, []), numerator, denominator, exclude=exclude)
-        for mo in show_months
-    ]
+    # Build row specs: list of (num_cats, den_cats, row_label)
+    if split:
+        all_num = [c for g in num_groups for c in g]
+        all_den = [c for g in den_groups for c in g]
+        if len(num_groups) > 1:
+            # One row per numerator group; denominator is the combined sum of all -D groups
+            row_specs = [
+                (g, all_den, " + ".join(g) + " / " + " + ".join(all_den))
+                for g in num_groups
+            ]
+        else:
+            # One row per denominator group; numerator is the combined sum of all -N groups
+            row_specs = [
+                (all_num, g, " + ".join(all_num) + " / " + " + ".join(g))
+                for g in den_groups
+            ]
+    else:
+        all_num = [c for g in num_groups for c in g]
+        all_den = [c for g in den_groups for c in g]
+        row_label = label or f"{' + '.join(all_num)} / {' + '.join(all_den)}"
+        row_specs = [(all_num, all_den, row_label)]
 
     table = Table(show_lines=False, box=None, padding=(0, 1), show_footer=False)
     table.add_column("Ratio", min_width=24)
     for mo in show_months:
-        table.add_column(mo, justify="right")
+        table.add_column(mo, justify="right", min_width=9)
     if len(show_months) >= 2:
         table.add_column("Trend", style="dim", no_wrap=True)
+
+    def _ratio_color(pct: float) -> str:
+        """Smooth green → yellow → red gradient; clamps at 100% for color scale."""
+        t = max(0.0, min(pct, 100.0)) / 100.0
+        if t <= 0.5:
+            s = t / 0.5        # 0→1 over first half
+            r, g = int(220 * s), 210
+        else:
+            s = (t - 0.5) / 0.5  # 0→1 over second half
+            r, g = 220, int(210 * (1 - s))
+        return f"rgb({r},{g},0)"
 
     def _fmt_ratio(v: float | None) -> str:
         if v is None:
             return "[dim]—[/dim]"
         pct = v * 100
-        color = "yellow" if pct >= 100 else "green"
-        return f"[{color}]{pct:.1f}%[/{color}]"
+        color = _ratio_color(pct)
+        bold = " bold" if pct >= 100 else ""
+        return f"[{color}{bold}]{pct:.1f}%[/{color}{bold}]"
 
-    row: list[str] = [row_label] + [_fmt_ratio(v) for v in values]
-    if len(show_months) >= 2:
-        sparkline_vals = [v for v in values if v is not None]
-        row.append(_sparkline(sparkline_vals))
+    for (num_cats, den_cats, row_label) in row_specs:
+        values: list[float | None] = [
+            compute_ratio(monthly_buckets.get(mo, []), num_cats, den_cats, exclude=exclude)
+            for mo in show_months
+        ]
+        row: list[str] = [row_label] + [_fmt_ratio(v) for v in values]
+        if len(show_months) >= 2:
+            row.append(_sparkline([v for v in values if v is not None]))
+        table.add_row(*row)
 
-    table.add_row(*row)
     console.print(table)
 
 

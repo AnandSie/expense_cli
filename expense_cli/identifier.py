@@ -14,7 +14,7 @@ _HEADER = """\
 #   description_contains — substring match against the transaction description (case-insensitive); can be a single string or a list of strings
 #   category             — category assigned to this counterparty (optional)"""
 
-_FIELD_ORDER = ["name", "iban", "description_contains", "category"]
+_FIELD_ORDER = ["name", "iban", "description_contains", "category", "manual_category"]
 
 
 def _migrate_categories() -> None:
@@ -199,6 +199,23 @@ def remove_category(name: str) -> bool:
             write_toml_array(COUNTERPARTIES_PATH, "counterparty", entries, _HEADER, _FIELD_ORDER, sort_key="name")
             return True
     return False
+
+
+def set_manual_category(name: str) -> None:
+    """Mark a counterparty as always-manual: never auto-categorize or prompt to save a rule.
+
+    Upserts manual_category = True on the named entry (creating it if absent).
+    Existing matchers and category field are preserved.
+    """
+    entries = load_counterparties()
+    name_lower = name.lower()
+    for entry in entries:
+        if entry.get("name", "").lower() == name_lower:
+            entry["manual_category"] = True
+            write_toml_array(COUNTERPARTIES_PATH, "counterparty", entries, _HEADER, _FIELD_ORDER, sort_key="name")
+            return
+    entries.append({"name": name, "manual_category": True})
+    write_toml_array(COUNTERPARTIES_PATH, "counterparty", entries, _HEADER, _FIELD_ORDER, sort_key="name")
 
 
 def clear_categories() -> int:

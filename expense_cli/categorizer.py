@@ -5,13 +5,15 @@ from expense_cli.identifier import (
     edit_counterparty_rule,
     remove_category,
     clear_categories,
+    set_manual_category,
 )
 
 # Re-export COUNTERPARTIES_PATH so tests can monkeypatch expense_cli.categorizer.COUNTERPARTIES_PATH
 # and have it take effect in load_counterparties calls via the identifier module.
 # (conftest monkeypatches both expense_cli.identifier.COUNTERPARTIES_PATH and this one.)
 __all__ = ["categorize", "load_rules", "category_rule_exists", "save_category_rule",
-           "edit_category_rule", "delete_category_rule", "clear_category_rules", "COUNTERPARTIES_PATH"]
+           "edit_category_rule", "delete_category_rule", "clear_category_rules",
+           "is_manual_category", "set_manual_category", "COUNTERPARTIES_PATH"]
 
 
 def load_rules() -> list[dict]:
@@ -74,6 +76,14 @@ def delete_category_rule(counterparty: str) -> bool:
     Returns False if not found or no category was set.
     """
     return remove_category(counterparty)
+
+
+def is_manual_category(counterparty: str) -> bool:
+    """Return True if this counterparty is flagged as always-manual (never auto-categorize)."""
+    return any(
+        e.get("name", "").lower() == counterparty.lower() and e.get("manual_category") is True
+        for e in load_counterparties()
+    )
 
 
 def clear_category_rules() -> int:
