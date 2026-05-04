@@ -1859,6 +1859,26 @@ def test_insights_exclude_and_exclude_counterparty_combined(tmp_storage):
     assert "food" not in result.output
 
 
+def test_insights_trend_exclude_hides_out_of_window_categories(tmp_storage):
+    """Categories excluded from the trend's show_months window must not appear as empty rows."""
+    # food is only in 2024-01, outside the --from/--to window
+    runner.invoke(app, ["add", "10.00", "A", "--category", "food", "--date", "2024-01-15"])
+    # transport is within the window
+    runner.invoke(app, ["add", "20.00", "B", "--category", "transport", "--date", "2026-01-15"])
+    result = runner.invoke(app, ["insights", "--trend", "--from", "2026-01-01", "--to", "2026-03-31"])
+    assert "transport" in result.output
+    assert "food" not in result.output
+
+
+def test_insights_trend_percentages_sum_to_100(tmp_storage):
+    """Trend % column must use abs row totals as base so all rows sum to 100%."""
+    runner.invoke(app, ["add", "75.00", "Groceries", "--category", "food", "--date", "2026-01-15"])
+    runner.invoke(app, ["add", "25.00", "Bus", "--category", "transport", "--date", "2026-01-15"])
+    result = runner.invoke(app, ["insights", "--trend", "--from", "2026-01-01", "--to", "2026-01-31"])
+    assert "75.0%" in result.output
+    assert "25.0%" in result.output
+
+
 def test_insights_include_category_single(tmp_storage):
     runner.invoke(app, ["add", "10.00", "A", "--category", "food"])
     runner.invoke(app, ["add", "20.00", "B", "--category", "transport"])
@@ -1982,6 +2002,18 @@ def test_insights_no_sparkline_single_month(tmp_storage):
     result = runner.invoke(app, ["insights", "--from", "2026-01-01", "--to", "2026-01-31"])
     assert result.exit_code == 0
     assert "Trend" not in result.output
+
+
+def test_insights_months_filters_data(tmp_storage, monkeypatch):
+    """--months N without --trend should limit the data window to the last N months."""
+    from expense_cli import cli as cli_mod
+    monkeypatch.setattr(cli_mod, "date", type("_D", (), {"today": staticmethod(lambda: __import__("datetime").date(2026, 4, 30))})())
+    runner.invoke(app, ["add", "99.00", "Old", "--category", "food", "--date", "2025-01-15"])
+    runner.invoke(app, ["add", "10.00", "Recent", "--category", "food", "--date", "2026-03-15"])
+    result = runner.invoke(app, ["insights", "--months", "3"])
+    assert result.exit_code == 0
+    assert "99.00" not in result.output
+    assert "10.00" in result.output
 
 
 # --- CLI: insights --trend pivot ---

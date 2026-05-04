@@ -51,7 +51,13 @@
       "Bash(.venv/Scripts/python.exe -m pytest tests/test_cli.py -k \"bank_list or bank_config or counterpart\" -q)",
       "Bash(.venv/Scripts/python.exe -m pytest \"tests/test_cli.py::test_config_categories_edit_interactive_rename\" \"tests/test_cli.py::test_config_categories_edit_interactive_no_changes\" \"tests/test_cli.py::test_config_categories_edit_interactive_not_found\" \"tests/test_cli.py::test_config_categories_remove_not_found\" \"tests/test_cli.py::test_config_categories_remove_all_aborts_on_wrong_confirmation\" \"tests/test_cli.py::test_config_categories_remove_all_and_counterparty_errors\" \"tests/test_cli.py::test_config_categories_remove_no_args_errors\" -q)",
       "Bash(.venv/Scripts/python.exe -m pytest \"tests/test_cli.py::test_config_categories_edit_interactive_rename\" -q)",
-      "Bash(timeout 20 .venv/Scripts/python.exe -m pytest -q -k \"ratio or insight\")"
+      "Bash(timeout 20 .venv/Scripts/python.exe -m pytest -q -k \"ratio or insight\")",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(.venv/Scripts/pytest.exe \"tests/test_cli.py::test_insights_trend_exclude_hides_out_of_window_categories\" -v)",
+      "Bash(/c/Users/Anand/source/expense_cli/.venv/Scripts/pytest.exe \"tests/test_cli.py::test_insights_trend_exclude_hides_out_of_window_categories\" -v)",
+      "Bash(C:/Users/Anand/source/expense_cli/.venv/Scripts/pytest.exe \"tests/test_cli.py::test_insights_trend_exclude_hides_out_of_window_categories\" --tb=short)",
+      "Bash(echo \"exit:$?\")",
+      "Bash(Get-ChildItem *)"
     ]
   }
 }

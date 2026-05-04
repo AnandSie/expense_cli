@@ -801,7 +801,7 @@ def list_expenses(
     from_date: Optional[str] = typer.Option(None, "--from", "-f", help="Start date YYYY-MM-DD (inclusive)"),
     to_date: Optional[str] = typer.Option(None, "--to", "-t", help="End date YYYY-MM-DD (inclusive)"),
     month: Optional[str] = typer.Option(None, "--month", "-m", help="Filter by month: YYYY-MM or 1-12"),
-    year: Optional[int] = typer.Option(None, "--year", "-y", help="Year to use with --month number (default: current year)"),
+    year: Optional[int] = typer.Option(None, "--year", "-y", help="Filter by year; also used with --month number (default: current year)"),
     unreviewed: bool = typer.Option(False, "--unreviewed", "-u", help="Show only expenses missing counterparty or category"),
     reviewed: bool = typer.Option(False, "--reviewed", "-r", help="Show only expenses with counterparty and category set"),
     wide: bool = typer.Option(False, "--wide", "-w", help="Show all columns (description, IBAN, time)"),
@@ -841,6 +841,9 @@ def list_expenses(
             raise typer.Exit(1)
 
     expenses = read_expenses()
+
+    if year is not None and not month:
+        expenses = [e for e in expenses if e["date"].startswith(str(year))]
 
     if expense_id is not None:
         try:
@@ -1062,6 +1065,7 @@ def import_expenses(
         table.add_column("Counterparty")
         table.add_column("IBAN", style="dim")
         table.add_column("Category")
+        table.add_column("Note", style="dim")
         table.add_column("Weekday", style="dim")
         for incoming_row, existing_row in skipped_pairs:
             table.add_row(
@@ -1073,6 +1077,7 @@ def import_expenses(
                 str(existing_row.get("counterparty", "")),
                 str(existing_row.get("iban", "")),
                 str(existing_row.get("category", "")),
+                str(existing_row.get("note", "")),
                 str(existing_row.get("weekday", "")),
             )
             table.add_row(
@@ -1083,6 +1088,7 @@ def import_expenses(
                 str(incoming_row.get("description", "")),
                 str(incoming_row.get("counterparty", "")),
                 str(incoming_row.get("iban", "")),
+                "",
                 "",
                 "",
             )
@@ -1102,6 +1108,7 @@ def import_expenses(
         table.add_column("Description")
         table.add_column("Counterparty")
         table.add_column("IBAN", style="dim")
+        table.add_column("Note", style="dim")
         for key, members in possible_duplicate_groups:
             label = format_match_key(match_fields, key)
             imported_ids = {row.get("id") for row in to_import}
@@ -1117,6 +1124,7 @@ def import_expenses(
                     str(member.get("description", "")),
                     str(member.get("counterparty", "")),
                     str(member.get("iban", "")),
+                    str(member.get("note", "")),
                 )
         console.print(table)
 
@@ -1216,6 +1224,7 @@ def duplicates(
     from_date: Optional[str] = typer.Option(None, "--from", "-f", help="Start date YYYY-MM-DD"),
     to_date: Optional[str] = typer.Option(None, "--to", "-t", help="End date YYYY-MM-DD"),
     match_field: list[str] = typer.Option([], "--match-field", help="Fields to use for duplicate detection (comma-separated)"),
+    min_id_gap: Optional[int] = typer.Option(None, "--min-id-gap", "-g", help="Only show groups where the max ID difference between members exceeds this value. Transactions imported together get consecutive IDs, so a small gap (e.g. 1–5) usually means the same import batch — not a real duplicate. Use a larger threshold (e.g. 100) to surface only cross-import duplicates."),
 ) -> None:
     """Show possible duplicate transactions based on selected fields."""
     try:
@@ -1231,6 +1240,13 @@ def duplicates(
         expenses = [e for e in expenses if e["date"] <= to_date]
 
     duplicate_groups = group_possible_duplicates(expenses, match_fields)
+
+    if min_id_gap is not None:
+        def _max_id_gap(members: list[dict]) -> int:
+            ids = [int(m["id"]) for m in members if m.get("id", "") != ""]
+            return max(ids) - min(ids) if len(ids) >= 2 else 0
+        duplicate_groups = [(key, members) for key, members in duplicate_groups if _max_id_gap(members) > min_id_gap]
+
     if not duplicate_groups:
         typer.echo("No possible duplicates found.")
         return
@@ -1246,7 +1262,9 @@ def duplicates(
         table.add_column("Amount", justify="right")
         table.add_column("Description")
         table.add_column("Counterparty")
+        table.add_column("Category")
         table.add_column("IBAN", style="dim")
+        table.add_column("Note", style="dim")
         for member in members:
             table.add_row(
                 str(member.get("id", "")),
@@ -1255,7 +1273,9 @@ def duplicates(
                 str(member.get("amount", "")),
                 str(member.get("description", "")),
                 str(member.get("counterparty", "")),
+                str(member.get("category", "")),
                 str(member.get("iban", "")),
+                str(member.get("note", "")),
             )
         console.print(table)
 
@@ -1585,15 +1605,19 @@ def _pick(prompt_text: str, options: list[str], header: str = "", color: str = "
         has_prev = _page_offset > 0
         has_next = _page_offset + 9 < len(filt)
         if has_prev or has_next:
-            nav = ("▲ " if has_prev else "  ") + ("▼" if has_next else " ")
+            end = min(_page_offset + 9, len(filt))
+            count_str = f"{_page_offset + 1}–{end} / {len(filt)}"
+            nav = ("▲ " if has_prev else "  ") + count_str + (" ▼" if has_next else "  ")
             line += f"   \033[2m{nav}\033[0m"
         return line
 
     initial_opts = make_options_line(get_filtered())
     _divider = "\033[2m" + "─" * _term_width + "\033[0m"
 
-    # Print: blank line, prompt, options, divider, hint — then move cursor back up to prompt
-    _sys.stdout.write(f"\n{prompt_prefix}{''.join(buffer)}\n{initial_opts}\n{_divider}\n{_HINT}")
+    # Print: prompt, options, divider, hint — then move cursor back up to prompt.
+    # No leading \n: callers (console.print / exit_pick) already leave the cursor at col 0
+    # of a fresh line, so we write the prompt directly there.
+    _sys.stdout.write(f"{prompt_prefix}{''.join(buffer)}\n{initial_opts}\n{_divider}\n{_HINT}")
     _sys.stdout.write(f"\033[3A\r{prompt_prefix}{''.join(buffer)}")  # up 3, col 1, rewrite prefix → cursor right after it
     _sys.stdout.flush()
 
@@ -2102,14 +2126,15 @@ def edit(
 
 @app.command()
 def delete(
-    expense_id: Optional[int] = typer.Argument(None, help="ID of the expense to delete"),
+    expense_id: Optional[str] = typer.Argument(None, help="ID(s) of the expense(s) to delete (comma-separated for multi-delete)"),
     all_: bool = typer.Option(False, "--all", "-a", help="Delete all expenses (requires confirmation)"),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt for single delete"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
-    """Delete a single expense by ID, or all expenses with --all.
+    """Delete one or more expenses by ID, or all expenses with --all.
 
     Examples:\n
       expense delete 42\n
+      expense delete 42,43,44\n
       expense delete 42 --yes\n
       expense delete --all
     """
@@ -2120,7 +2145,7 @@ def delete(
         raise typer.Exit(1)
 
     if not all_ and expense_id is None:
-        typer.echo("Provide an expense ID or use --all to delete everything.", err=True)
+        typer.echo("Provide one or more expense IDs (comma-separated) or use --all to delete everything.", err=True)
         raise typer.Exit(1)
 
     if all_:
@@ -2140,25 +2165,55 @@ def delete(
         typer.echo(f"Deleted {deleted} expense(s).")
         return
 
-    expenses = read_expenses()
-    match = next((e for e in expenses if int(e["id"]) == expense_id), None)
-    if match is None:
-        typer.echo(f"No expense with ID {expense_id}.", err=True)
+    try:
+        ids = [int(x.strip()) for x in expense_id.split(",")]
+    except ValueError:
+        typer.echo("IDs must be integers (comma-separated for multi-delete).", err=True)
         raise typer.Exit(1)
 
-    console.print(f"  [dim]id:[/dim]          {match['id']}")
-    console.print(f"  [dim]date:[/dim]        {match['date']}")
-    console.print(f"  [dim]amount:[/dim]      {match['amount']}")
-    console.print(f"  [dim]description:[/dim] {match['description']}")
-    console.print(f"  [dim]category:[/dim]    {match['category'] or '-'}")
-    console.print(f"  [dim]counterparty:[/dim]{match.get('counterparty') or '-'}")
-    console.print(f"  [dim]iban:[/dim]        {match.get('iban') or '-'}")
+    expenses = read_expenses()
+    id_to_row = {int(e["id"]): e for e in expenses}
+    missing = [i for i in ids if i not in id_to_row]
+    if missing:
+        typer.echo(f"No expense(s) with ID(s): {', '.join(str(i) for i in missing)}", err=True)
+        raise typer.Exit(1)
+
+    matches = [id_to_row[i] for i in ids]
+
+    if len(matches) == 1:
+        match = matches[0]
+        console.print(f"  [dim]id:[/dim]          {match['id']}")
+        console.print(f"  [dim]date:[/dim]        {match['date']}")
+        console.print(f"  [dim]amount:[/dim]      {match['amount']}")
+        console.print(f"  [dim]description:[/dim] {match['description']}")
+        console.print(f"  [dim]category:[/dim]    {match['category'] or '-'}")
+        console.print(f"  [dim]counterparty:[/dim]{match.get('counterparty') or '-'}")
+        console.print(f"  [dim]iban:[/dim]        {match.get('iban') or '-'}")
+    else:
+        table = Table(show_lines=False, box=None, padding=(0, 1))
+        table.add_column("ID", style="dim")
+        table.add_column("Date")
+        table.add_column("Amount", justify="right")
+        table.add_column("Description")
+        table.add_column("Counterparty")
+        table.add_column("Category")
+        for match in matches:
+            table.add_row(
+                str(match["id"]),
+                str(match["date"]),
+                str(match["amount"]),
+                str(match["description"]),
+                str(match.get("counterparty") or ""),
+                str(match["category"] or ""),
+            )
+        console.print(table)
 
     if not yes:
-        typer.confirm("\nPermanently delete this expense?", abort=True)
+        typer.confirm(f"\nPermanently delete {len(matches)} expense(s)?", abort=True)
 
-    delete_expense(expense_id)
-    typer.echo(f"Deleted expense #{expense_id}.")
+    for i in ids:
+        delete_expense(i)
+    typer.echo(f"Deleted {len(ids)} expense(s): {', '.join(f'#{i}' for i in ids)}.")
 
 
 def _parse_part_spec(spec: str, parent_abs: float) -> tuple[str, float | None]:
@@ -2537,6 +2592,16 @@ def insights(
             typer.echo(str(e), err=True)
             raise typer.Exit(1)
 
+    if months and not from_date and not to_date and not month:
+        today = date.today()
+        sy, sm = today.year, today.month
+        for _ in range(months - 1):
+            sm -= 1
+            if sm == 0:
+                sm = 12
+                sy -= 1
+        from_date = f"{sy:04d}-{sm:02d}-01"
+
     if by not in ("category", "counterparty"):
         typer.echo("--by must be 'category' or 'counterparty'.", err=True)
         raise typer.Exit(1)
@@ -2633,8 +2698,21 @@ def insights(
         from datetime import date as _date_cls
 
         if from_date or to_date:
-            start_mo = from_date[:7] if from_date else (all_months[0] if all_months else "")
             end_mo = to_date[:7] if to_date else (all_months[-1] if all_months else "")
+            if from_date:
+                start_mo = from_date[:7]
+            elif months:
+                # Compute start by counting back --months from the end month
+                ey, em = int(end_mo[:4]), int(end_mo[5:7])
+                sy, sm = ey, em
+                for _ in range(months - 1):
+                    sm -= 1
+                    if sm == 0:
+                        sm = 12
+                        sy -= 1
+                start_mo = f"{sy:04d}-{sm:02d}"
+            else:
+                start_mo = all_months[0] if all_months else ""
         else:
             n = months or 6
             today = _date_cls.today()
@@ -2663,6 +2741,7 @@ def insights(
             return abs(sum(monthly_primary.get(mo, {}).get(k, 0.0) for mo in show_months for k in keys))
 
         sorted_groups = sorted(all_groups_keyed, key=lambda g: abs(sum(monthly_primary.get(mo, {}).get(g, 0.0) for mo in show_months)), reverse=True)
+        sorted_groups = [g for g in sorted_groups if any(monthly_primary.get(mo, {}).get(g, 0.0) != 0 for mo in show_months)]
 
         if min_amount is not None:
             sorted_groups = [g for g in sorted_groups if abs(sum(monthly_primary.get(mo, {}).get(g, 0.0) for mo in show_months)) >= min_amount]
@@ -2686,6 +2765,10 @@ def insights(
         col_totals = {mo: sum(monthly_primary.get(mo, {}).get(g, 0.0) for g in sorted_groups) for mo in show_months}
         grand_total = sum(col_totals.values())
         avg_total = grand_total / len(show_months) if show_months else 0.0
+        grand_total_abs = sum(
+            abs(sum(monthly_primary.get(mo, {}).get(k, 0.0) for mo in show_months for k in children))
+            for _, children in ordered_pivot_groups
+        )
 
         def _pivot_color(v: float, bold: bool, dim: bool) -> str:
             if not v:
@@ -2705,7 +2788,7 @@ def insights(
             row_vals = [sum(monthly_primary.get(mo, {}).get(k, 0.0) for k in keys) for mo in show_months]
             avg = sum(row_vals) / len(show_months)
             row_total = sum(row_vals)
-            pct = abs(row_total) / abs(grand_total) * 100 if grand_total else 0.0
+            pct = abs(row_total) / grand_total_abs * 100 if grand_total_abs else 0.0
             pct_str = f"[dim]{pct:.1f}%[/dim]" if dim_label else (f"[bold]{pct:.1f}%[/bold]" if bold else f"{pct:.1f}%")
             lbl_prefix = "[bold]" if bold else ("[dim]" if dim_label else "")
             lbl_suffix = "[/bold]" if bold else ("[/dim]" if dim_label else "")
